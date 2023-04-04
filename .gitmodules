@@ -1,0 +1,3 @@
+[submodule "OmniIsaacGymEnvs"]
+	path = OmniIsaacGymEnvs
+	url = git@github.com:davesarmoury/OmniIsaacGymEnvs.git
