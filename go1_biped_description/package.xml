@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>go1_biped_description</name>
+  <version>0.0.0</version>
+  <description>The go1_biped_description package</description>
+
+  <maintainer email="davesarmoury@gmail.com">Dave Niewinski</maintainer>
+
+  <license>CC-BY-3</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>urdf</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <export>
+  </export>
+</package>

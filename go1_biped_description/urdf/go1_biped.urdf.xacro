@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="go1_biped">
+  <link name="base_link" />
+
+  <joint name="GV7_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="sensor" />
+    <origin xyz="0.2 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <link name="sensor" />
+</robot>
