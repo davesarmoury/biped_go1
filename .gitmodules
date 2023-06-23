@@ -1,6 +1,9 @@
 [submodule "OmniIsaacGymEnvs"]
-	path = OmniIsaacGymEnvs
-	url = git@github.com:davesarmoury/OmniIsaacGymEnvs.git
+        path = OmniIsaacGymEnvs
+        url = git@github.com:davesarmoury/OmniIsaacGymEnvs.git
 [submodule "unitree_ros_to_real"]
-	path = unitree_ros_to_real
-	url = git@github.com:unitreerobotics/unitree_ros_to_real.git
+        path = unitree_ros_to_real
+        url = git@github.com:davesarmoury/unitree_ros_to_real.git
+[submodule "unitree_ros"]
+        path = unitree_ros
+        url = git@github.com:davesarmoury/unitree_ros.git
