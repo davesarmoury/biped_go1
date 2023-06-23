@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://ros.org/wiki/xacro" name="go1_biped">
-  <link name="base_link" />
+  <xacro:include filename="$(find go1_description)/urdf/go1.urdf"/> 
 
   <joint name="GV7_joint" type="fixed">
-    <parent link="base_link" />
+    <parent link="base" />
     <child link="sensor" />
     <origin xyz="0.2 0 0.1" rpy="0 0 0"/>
   </joint>
