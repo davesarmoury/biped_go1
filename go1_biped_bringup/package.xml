@@ -12,6 +12,7 @@
   <exec_depend>go1_biped_description</exec_depend>
   <exec_depend>go1_biped_control</exec_depend>
   <exec_depend>microstrain_inertial_driver</exec_depend>
+  <exec_depend>unitree_legged_real</exec_depend>
 
   <export>
   </export>

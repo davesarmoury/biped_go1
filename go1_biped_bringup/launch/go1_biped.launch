@@ -1,5 +1,5 @@
 <launch>
   <include file="$(find go1_biped_description)/launch/description.launch"/>
-  <include file="$(find go1_biped_control)/launch/ekf.launch"/>
   <include file="$(find go1_biped_bringup)/launch/microstrain.launch"/>
+  <include file="$(find go1_biped_bringup)/launch/go1.launch"/>
 </launch>
