@@ -1,4 +1,4 @@
 <launch>
   <node pkg="unitree_legged_real" type="ros_udp" name="node_ros_udp" output="screen" args="lowlevel"/>
-  <node pkg="biped_go1" type="go1_joint_republisher.py" name="go1_joint_republisher" output="screen"/>
+  <node pkg="go1_biped_control" type="go1_joint_republisher.py" name="go1_joint_republisher" output="screen"/>
 </launch>

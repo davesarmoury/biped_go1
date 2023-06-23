@@ -33,7 +33,7 @@ def low_callback(msg):
 def main():
     global pub
     rospy.init_node('go1_joints', anonymous=True)
-    pub = rospy.Publisher('/joint_state', JointState, queue_size=10)
+    pub = rospy.Publisher('/joint_states', JointState, queue_size=10)
     rospy.Subscriber("/low_state", LowState, low_callback)
     rospy.spin()
 
