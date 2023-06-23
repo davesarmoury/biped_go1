@@ -5,5 +5,5 @@
         path = unitree_ros_to_real
         url = git@github.com:davesarmoury/unitree_ros_to_real.git
 [submodule "unitree_ros"]
-        path = unitree_ros
-        url = git@github.com:davesarmoury/unitree_ros.git
+	path = unitree_ros
+	url = git@github.com:davesarmoury/unitree_ros.git
