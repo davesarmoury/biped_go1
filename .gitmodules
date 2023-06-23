@@ -3,4 +3,4 @@
 	url = git@github.com:davesarmoury/OmniIsaacGymEnvs.git
 [submodule "unitree_ros_to_real"]
 	path = unitree_ros_to_real
-	url = git@github.com:davesarmoury/unitree_ros_to_real.git
+	url = git@github.com:unitreerobotics/unitree_ros_to_real.git
