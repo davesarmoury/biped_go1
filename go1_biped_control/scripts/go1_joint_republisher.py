@@ -5,18 +5,18 @@ from sensor_msgs.msg import JointState
 
 deg2rad = 0.0174533
 
-dof_names = ["RR_hip_joint",
-            "RL_hip_joint",
-            "FL_hip_joint",
-            "FR_hip_joint",
-            "FL_thigh_joint",
+dof_names = ["FR_hip_joint",
             "FR_thigh_joint",
-            "RL_thigh_joint",
-            "RR_thigh_joint",
-            "FL_calf_joint",
-            "RL_calf_joint",
             "FR_calf_joint",
-            "RR_calf_joint"]
+            "FL_hip_joint",
+            "FL_thigh_joint",
+            "FL_calf_joint",
+            "RR_hip_joint",
+            "RR_thigh_joint",
+            "RR_calf_joint",
+            "RL_hip_joint",
+            "RL_thigh_joint",
+            "RL_calf_joint"]
 
 def low_callback(msg):
   global pub
@@ -25,8 +25,8 @@ def low_callback(msg):
   js_msg.header.stamp = rospy.Time.now()
   js_msg.name = dof_names
 
-  for m in msg.motorState:
-    js_msg.position.append(m.q * deg2rad)
+  for i in range(len(dof_names)):
+    js_msg.position.append(msg.motorState[i].q)
 
   pub.publish(js_msg)
 
