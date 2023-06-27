@@ -1,0 +1,6 @@
+<launch>
+  <rosparam file="/home/davesarmoury/ws/biped_ws/src/biped_go1/OmniIsaacGymEnvs/omniisaacgymenvs/cfg/task/Go1_Horizontal.yaml" />
+  <rosparam param="model/path">/home/davesarmoury/ws/biped_ws/src/biped_go1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/Go1/nn$cgymenvs/runs/Go1/nn/Horizontal.pth</rosparam>
+
+  <node pkg="go1_biped_omniverse" type="go1_sim2real.py" name="go1_sim2real" />
+</launch>

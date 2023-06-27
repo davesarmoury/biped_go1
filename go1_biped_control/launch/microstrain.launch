@@ -1,15 +1,17 @@
 <?xml version="1.1"?>
-
 <launch>
   <arg name="namespace"   default = "/"                           doc = "Namespace to use when launching the nodes in this launch file" />
   <arg name="node_name"   default = "microstrain_inertial_driver" doc = "Name to give the Microstrain Inertial Driver" />
   <arg name="debug"       default = "false"                       doc = "Whether or not to log debug information." />
+  <arg name="params_file" default = ""                            doc = "Path to file that will load additional parameters" />
+
+  <env name="ROSCONSOLE_CONFIG_FILE" value="$(find microstrain_inertial_driver)/config/custom_rosconsole.conf" if="$(arg debug)" />
 
   <node name="$(arg node_name)" pkg="microstrain_inertial_driver" type="microstrain_inertial_driver_node" output="screen" ns="$(arg namespace)">
-    <rosparam file="$(find go1_biped_control)/config/microstrain.yaml" command="load" />
+    <rosparam file="$(find go1_biped_control)/config/GV7.yml" command="load" />
 
     <param name="debug" value="$(arg debug)" type="bool" />
-  </node>
 
-  <node pkg="tf" type="static_transform_publisher" name="imu_broadcaster" args="0 0 0 0 0 0 1 base_link imu 100" />
+    <remap from="/tf" to="/microstrain_tf" />
+  </node>
 </launch>
