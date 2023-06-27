@@ -4,6 +4,7 @@ import torch
 import threading
 from unitree_legged_msgs.msg import LowCmd
 from unitree_legged_msgs.msg import LowState
+from unitree_legged_msgs.msg import MotorCmd
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 
@@ -26,9 +27,28 @@ joint_map = [6, 9, 3, 0, 4, 1, 10, 7, 5, 11, 2, 8]
 
 device = 'cuda'
 
+Kp = 50
+Kd = 5
+
 state_lock = threading.Lock()
 odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
+
+def network_to_sdk(j_in):
+    j_out = [None] * 12
+
+    for i in range(12):
+        j_out[joint_map[i]] = j_in[i]
+
+    return j_out
+
+def sdk_to_network(j_in):
+    j_out = []
+
+    for i in range(12):
+        j_out.append(j_in[joint_map[i]])
+
+    return j_out
 
 def state_callback(msg):
     global current_joint_positions, current_joint_velocities, state_init
@@ -86,7 +106,6 @@ def get_transform():
 
     return [pos.x, pos.y, pos.z, ori.x, ori.y, ori.z, ori.w]
 
-
 def get_velocity():
     global current_odom, odom_init
 
@@ -122,7 +141,7 @@ def get_commands():
     temp_cmd_vel = current_cmd_vel
     cmd_vel_lock.release()
 
-    return temp_cmd_vel
+    return [temp_cmd_vel.linear.x, temp_cmd_vel.angular.z]
 
 def cmd_vel_callback(msg):
     global cmd_vel_lock, current_cmd_vel
@@ -131,12 +150,12 @@ def cmd_vel_callback(msg):
     current_cmd_vel = msg
     cmd_vel_lock.release()    
 
-def get_observations():
+def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions):
     commands = get_commands()
     root_transforms = get_transform()
     root_velocity = get_velocity()
-    dof_pos = get_joint_positions()
-    dof_vel = get_joint_velocities()
+    dof_pos = sdk_to_network(get_joint_positions())
+    dof_vel = sdk_to_network(get_joint_velocities())
 
     torso_position = root_transforms[0:3]
     torso_rotation = root_transforms[3:7]
@@ -150,7 +169,7 @@ def get_observations():
     dof_pos_scaled = (dof_pos - default_dof_pos) * dof_pos_scale
 
     commands_scaled = commands * torch.tensor(
-        [lin_vel_scale, lin_vel_scale, ang_vel_scale],
+        [lin_vel_scale, ang_vel_scale],
         requires_grad=False,
         device=device,
     )
@@ -163,7 +182,7 @@ def get_observations():
             commands_scaled,
             dof_pos_scaled,
             dof_vel * dof_vel_scale,
-            actions,
+            last_actions,
         ),
         dim=-1,
     )
@@ -171,11 +190,14 @@ def get_observations():
     return obs
 
 def publish_cmd():
-    global low_cmd
-    pass
+    global cmd_lock, low_cmd, cmd_pub
+
+    cmd_lock.acquire()
+    cmd_pub.publish(low_cmd)
+    cmd_lock.release()
 
 def main():
-    global state_init, odom_init, low_cmd, cmd_lock, low_cmd
+    global state_init, odom_init, low_cmd, cmd_lock, low_cmd, cmd_pub
 
     rospy.init_node('horizontal_controller', anonymous=True)
 
@@ -192,21 +214,41 @@ def main():
     dof_names = named_default_joint_angles.keys()
     model_path = rospy.get_param("model/path")
 
-    rospy.loginfo("Loading Model...")
-    model = torch.load(model_path)
-    model.eval()
-    rospy.loginfo("Loaded")
-
-
     default_dof_pos = torch.zeros((len(dof_names)), dtype=torch.float, device=device, requires_grad=False)
     for i in range(len(dof_names)):
         name = dof_names[i]
         angle = named_default_joint_angles[name]
         default_dof_pos[i] = angle
 
-    pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
+    last_actions = default_dof_pos
+    low_cmd = LowCmd()
+    low_cmd.head[0] = 0xFE
+    low_cmd.head[1] = 0xEF
+    low_cmd.levelFlag = 0xff  # LOW LEVEL
+
+    for i in range(12):
+        tmp_cmd = MotorCmd()
+        tmp_cmd.mode = 0x0A
+        tmp_cmd.q = default_dof_pos[joint_map[i]]
+
+        tmp_cmd.Kp = 5.0
+        tmp_cmd.Kd = 1.0
+        tmp_cmd.tau = 0.0
+        tmp_cmd.dq = 0.0
+
+        low_cmd.motorCmd.append(tmp_cmd)
+
+    rospy.loginfo("Loading Model...")
+    model = torch.load(model_path)
+    model.eval()
+    model.to(device)
+    rospy.loginfo("Loaded")
+
+    cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
     rospy.Subscriber("/low_state", LowState, state_callback)
-    rospy.Subscriber("/odometrt/filtered", Odometry, odom_callback)
+    rospy.Subscriber("/odometry/filtered", Odometry, odom_callback)
+
+    rospy.Timer(rospy.Duration(1.0/500.0), publish_cmd)
 
     rate = rospy.Rate(1)
 
@@ -218,22 +260,38 @@ def main():
     
     rospy.loginfo("Initialized")
 
-    rospy.Timer(rospy.Duration(1.0/500.0), publish_cmd)
-
     rate = rospy.Rate(14)
 
-    while not rospy.is_shutdown():
-        temp_low_cmd = LowCmd()
-        temp_low_cmd.head[0] = 0xFE
-        temp_low_cmd.head[1] = 0xEF
-        temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
+    with torch.no_grad():
+        while not rospy.is_shutdown():
+            temp_low_cmd = LowCmd()
+            temp_low_cmd.head[0] = 0xFE
+            temp_low_cmd.head[1] = 0xEF
+            temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
 
-        obs = get_observations()
+            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions)
 
-        cmd_lock.acquire()
-        low_cmd = temp_low_cmd
-        cmd_lock.release()
+            nn_vals = model(obs)
+            last_actions = nn_vals
+            nn_vals_sdk = network_to_sdk(nn_vals)
 
-        rate.sleep()
+            for j_q in nn_vals_sdk:
+                tmp_cmd = MotorCmd()
+
+                tmp_cmd.mode = 0x0A
+                tmp_cmd.q = j_q
+
+                tmp_cmd.Kp = Kp
+                tmp_cmd.Kd = Kd
+                tmp_cmd.tau = 0.0
+                tmp_cmd.dq = 0.0
+
+                temp_low_cmd.motorCmd.append(tmp_cmd)
+
+            cmd_lock.acquire()
+            low_cmd = temp_low_cmd
+            cmd_lock.release()
+
+            rate.sleep()
 
 main()
