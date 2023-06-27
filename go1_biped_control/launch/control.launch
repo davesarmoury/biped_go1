@@ -1,6 +1,4 @@
 <launch> 
   <include file="$(find go1_biped_control)/launch/microstrain.launch" />
   <include file="$(find go1_biped_control)/launch/ekf.launch" />
-
-  <node pkg="go1_biped_control" type="go1_joint_republisher.py" name="go1_joint_republisher" />
 </launch>
