@@ -56,7 +56,7 @@ def state_callback(msg):
     temp_joint_positions = []
     temp_joint_velocities = []
 
-    for j in m.motorState:
+    for j in msg.motorState:
         temp_joint_positions.append(j.q)
         temp_joint_velocities.append(j.dq)
 
@@ -66,7 +66,7 @@ def state_callback(msg):
     state_init = True
     state_lock.release()
 
-def odom_callback(msg)
+def odom_callback(msg):
     global current_odom, odom_init
 
     odom_lock.acquire()
@@ -189,7 +189,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
 
     return obs
 
-def publish_cmd():
+def publish_cmd(te):
     global cmd_lock, low_cmd, cmd_pub
 
     cmd_lock.acquire()
@@ -206,42 +206,48 @@ def main():
 
     gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=device)
 
-    lin_vel_scale = rospy.get_param("env/learn/linearVelocityScale")
-    ang_vel_scale = rospy.get_param("env/learn/angularVelocityScale")
-    dof_pos_scale = rospy.get_param("env/learn/dofPositionScale")
-    dof_vel_scale = rospy.get_param("env/learn/dofVelocityScale")
+    lin_vel_scale = rospy.get_param("/env/learn/linearVelocityScale")
+    ang_vel_scale = rospy.get_param("/env/learn/angularVelocityScale")
+    dof_pos_scale = rospy.get_param("/env/learn/dofPositionScale")
+    dof_vel_scale = rospy.get_param("/env/learn/dofVelocityScale")
     named_default_joint_angles = rospy.get_param("/env/defaultJointAngles")
-    dof_names = named_default_joint_angles.keys()
-    model_path = rospy.get_param("model/path")
+    dof_names = list(named_default_joint_angles.keys())
+    model_path = rospy.get_param("/model/path")
 
-    default_dof_pos = torch.zeros((len(dof_names)), dtype=torch.float, device=device, requires_grad=False)
+    default_dof_pos = []
+    default_dof_pos_t = torch.zeros((len(dof_names)), dtype=torch.float, device=device, requires_grad=False)
     for i in range(len(dof_names)):
         name = dof_names[i]
         angle = named_default_joint_angles[name]
-        default_dof_pos[i] = angle
+        default_dof_pos_t[i] = angle
+        default_dof_pos.append(angle)
 
     last_actions = default_dof_pos
     low_cmd = LowCmd()
-    low_cmd.head[0] = 0xFE
-    low_cmd.head[1] = 0xEF
+    low_cmd.head = [0xEE, 0xEF]
     low_cmd.levelFlag = 0xff  # LOW LEVEL
 
     for i in range(12):
-        tmp_cmd = MotorCmd()
-        tmp_cmd.mode = 0x0A
-        tmp_cmd.q = default_dof_pos[joint_map[i]]
+        low_cmd.motorCmd[i].mode = 0x0A
+        low_cmd.motorCmd[i].q = default_dof_pos[joint_map[i]]
 
-        tmp_cmd.Kp = 5.0
-        tmp_cmd.Kd = 1.0
-        tmp_cmd.tau = 0.0
-        tmp_cmd.dq = 0.0
-
-        low_cmd.motorCmd.append(tmp_cmd)
+        low_cmd.motorCmd[i].Kp = 5.0
+        low_cmd.motorCmd[i].Kd = 1.0
+        low_cmd.motorCmd[i].tau = 0.0
+        low_cmd.motorCmd[i].dq = 0.0
+        
 
     rospy.loginfo("Loading Model...")
-    model = torch.load(model_path)
-    model.eval()
-    model.to(device)
+    rospy.loginfo(model_path)
+
+    #model = torch.nn.Sequential()
+    #checkpoint = torch.load(model_path)
+    
+    #model.load_state_dict(checkpoint['model'])
+
+    #model.eval()
+    #model.to(device)
+
     rospy.loginfo("Loaded")
 
     cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
@@ -254,7 +260,7 @@ def main():
 
     while not rospy.is_shutdown():
         rospy.loginfo("Waiting for initialization data...")
-        if state_init, odom_init:
+        if state_init and odom_init:
             break
         rate.sleep()
     
@@ -265,32 +271,31 @@ def main():
     with torch.no_grad():
         while not rospy.is_shutdown():
             temp_low_cmd = LowCmd()
-            temp_low_cmd.head[0] = 0xFE
-            temp_low_cmd.head[1] = 0xEF
+            temp_low_cmd.head = [0xFE, 0xEF]
             temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
 
-            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions)
+#            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions)
+#
+#            nn_vals = model(obs)
+#            last_actions = nn_vals
+#            nn_vals_sdk = network_to_sdk(nn_vals)
+#
+#            for j_q in nn_vals_sdk:
+#                tmp_cmd = MotorCmd()
+#
+ #               tmp_cmd.mode = 0x0A
+ #               tmp_cmd.q = j_q
+#
+#                tmp_cmd.Kp = Kp
+#                tmp_cmd.Kd = Kd
+#                tmp_cmd.tau = 0.0
+#                tmp_cmd.dq = 0.0
+#
+#                temp_low_cmd.motorCmd.append(tmp_cmd)
 
-            nn_vals = model(obs)
-            last_actions = nn_vals
-            nn_vals_sdk = network_to_sdk(nn_vals)
-
-            for j_q in nn_vals_sdk:
-                tmp_cmd = MotorCmd()
-
-                tmp_cmd.mode = 0x0A
-                tmp_cmd.q = j_q
-
-                tmp_cmd.Kp = Kp
-                tmp_cmd.Kd = Kd
-                tmp_cmd.tau = 0.0
-                tmp_cmd.dq = 0.0
-
-                temp_low_cmd.motorCmd.append(tmp_cmd)
-
-            cmd_lock.acquire()
-            low_cmd = temp_low_cmd
-            cmd_lock.release()
+#            cmd_lock.acquire()
+#            low_cmd = temp_low_cmd
+#            cmd_lock.release()
 
             rate.sleep()
 
