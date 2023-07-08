@@ -7,6 +7,9 @@ from unitree_legged_msgs.msg import LowState
 from unitree_legged_msgs.msg import MotorCmd
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
+import onnx
+import onnxruntime as ort
+
 
 #    NETWORK ORDER     SDK INDEX
 #
@@ -236,19 +239,28 @@ def main():
         low_cmd.motorCmd[i].tau = 0.0
         low_cmd.motorCmd[i].dq = 0.0
         
+    rospy.loginfo("CUDA: " + str(onnx.__version__))
 
-    rospy.loginfo("Loading Model...")
+    rospy.loginfo("#####################################################")
     rospy.loginfo(model_path)
+    rospy.loginfo("#####################################################")
 
-    #model = torch.nn.Sequential()
-    #checkpoint = torch.load(model_path)
-    
-    #model.load_state_dict(checkpoint['model'])
+    rospy.loginfo("Verifying Model...")
+    onnx_model = onnx.load(model_path)
+    onnx.checker.check_model(onnx_model)
 
-    #model.eval()
-    #model.to(device)
-
+    rospy.loginfo("#####################################################")
+    rospy.loginfo("Loading Model...")
+    ort_model = ort.InferenceSession(model_path)
     rospy.loginfo("Loaded")
+
+    rospy.loginfo("Available: " + str(ort.get_available_providers()))
+    rospy.loginfo("Used: " + str(ort_model.get_providers()))
+    
+    input_shape = (1, 44)
+    output_shape = (1, 12)
+
+    rospy.loginfo("#####################################################")
 
     cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
     rospy.Subscriber("/low_state", LowState, state_callback)
@@ -274,28 +286,32 @@ def main():
             temp_low_cmd.head = [0xFE, 0xEF]
             temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
 
-#            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions)
-#
-#            nn_vals = model(obs)
-#            last_actions = nn_vals
-#            nn_vals_sdk = network_to_sdk(nn_vals)
-#
-#            for j_q in nn_vals_sdk:
-#                tmp_cmd = MotorCmd()
-#
- #               tmp_cmd.mode = 0x0A
- #               tmp_cmd.q = j_q
-#
-#                tmp_cmd.Kp = Kp
-#                tmp_cmd.Kd = Kd
-#                tmp_cmd.tau = 0.0
-#                tmp_cmd.dq = 0.0
-#
-#                temp_low_cmd.motorCmd.append(tmp_cmd)
+            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions)
 
+            outputs = ort_model.run(None, {"obs": np.expand_dims(obs, axis=0).astype(np.float32)},)
+            mu = outputs[0].squeeze(1)
+            sigma = np.exp(outputs[1].squeeze(1))
+            actions = np.random.normal(mu, sigma)
+
+            nn_vals_sdk = network_to_sdk(actions)
+
+            for j_q in nn_vals_sdk:
+                tmp_cmd = MotorCmd()
+
+                tmp_cmd.mode = 0x0A
+                tmp_cmd.q = j_q
+
+                tmp_cmd.Kp = Kp
+                tmp_cmd.Kd = Kd
+                tmp_cmd.tau = 0.0
+                tmp_cmd.dq = 0.0
+
+                temp_low_cmd.motorCmd.append(tmp_cmd)
+            
 #            cmd_lock.acquire()
 #            low_cmd = temp_low_cmd
 #            cmd_lock.release()
+            last_actions = actions
 
             rate.sleep()
 
