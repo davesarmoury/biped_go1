@@ -2,5 +2,5 @@
   <include file="$(find go1_biped_description)/launch/description.launch"/>
   <include file="$(find go1_biped_control)/launch/control.launch"/>
   <include file="$(find go1_biped_bringup)/launch/go1.launch"/>
-  <include file="$(find go1_biped_omniverse)/launch/omniverse_control.launch"/>
+  <!-- include file="$(find go1_biped_omniverse)/launch/omniverse_control.launch"/ -->
 </launch>
