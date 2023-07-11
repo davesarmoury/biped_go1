@@ -75,7 +75,7 @@ def odom_callback(msg):
     odom_lock.acquire()
     current_odom = msg
     odom_init = True
-    odom_lock.release()    
+    odom_lock.release()
 
 # Blatantly stolen from omni.isaac.core.utils.torch.rotations
 @torch.jit.script
@@ -121,7 +121,7 @@ def get_velocity():
 
 def get_joint_positions():
     global state_lock, current_joint_positions
-    
+
     state_lock.acquire()
     temp_joint_positions = current_joint_positions
     state_lock.release()
@@ -130,7 +130,7 @@ def get_joint_positions():
 
 def get_joint_velocities():
     global state_lock, current_joint_velocities
-    
+
     state_lock.acquire()
     temp_joint_velocities = current_joint_velocities
     state_lock.release()
@@ -151,7 +151,7 @@ def cmd_vel_callback(msg):
 
     cmd_vel_lock.acquire()
     current_cmd_vel = msg
-    cmd_vel_lock.release()    
+    cmd_vel_lock.release()
 
 def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions):
     commands = get_commands()
@@ -238,7 +238,7 @@ def main():
         low_cmd.motorCmd[i].Kd = 1.0
         low_cmd.motorCmd[i].tau = 0.0
         low_cmd.motorCmd[i].dq = 0.0
-        
+
     rospy.loginfo("CUDA: " + str(onnx.__version__))
 
     rospy.loginfo("#####################################################")
@@ -256,7 +256,7 @@ def main():
 
     rospy.loginfo("Available: " + str(ort.get_available_providers()))
     rospy.loginfo("Used: " + str(ort_model.get_providers()))
-    
+
     input_shape = (1, 44)
     output_shape = (1, 12)
 
@@ -275,7 +275,7 @@ def main():
         if state_init and odom_init:
             break
         rate.sleep()
-    
+
     rospy.loginfo("Initialized")
 
     rate = rospy.Rate(14)
@@ -292,7 +292,6 @@ def main():
             mu = outputs[0].squeeze(1)
             sigma = np.exp(outputs[1].squeeze(1))
             actions = np.random.normal(mu, sigma)
-
             nn_vals_sdk = network_to_sdk(actions)
 
             for j_q in nn_vals_sdk:
@@ -307,7 +306,7 @@ def main():
                 tmp_cmd.dq = 0.0
 
                 temp_low_cmd.motorCmd.append(tmp_cmd)
-            
+
 #            cmd_lock.acquire()
 #            low_cmd = temp_low_cmd
 #            cmd_lock.release()

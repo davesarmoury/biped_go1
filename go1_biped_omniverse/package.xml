@@ -10,9 +10,9 @@
 
   <buildtool_depend>catkin</buildtool_depend>
   <exec_depend>rospy</exec_depend>
-  <exec_depend>unitree-legged-msgs</exec_depend>
-  <exec_depend>sensor-msgs</exec_depend>
-  <exec_depend>nav-msgs</exec_depend>
+  <exec_depend>unitree_legged_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>python3-pytorch-pip</exec_depend>
 
 </package>
