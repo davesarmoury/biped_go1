@@ -30,6 +30,9 @@ joint_map = [6, 9, 3, 0, 4, 1, 10, 7, 5, 11, 2, 8]
 
 device = 'cuda'
 
+onnx_providers = ['CUDAExecutionProvider']
+#onnx_providers = ['TensorrtExecutionProvider']
+
 Kp = 50
 Kd = 5
 
@@ -251,10 +254,12 @@ def main():
 
     rospy.loginfo("#####################################################")
     rospy.loginfo("Loading Model...")
-    ort_model = ort.InferenceSession(model_path)
-    rospy.loginfo("Loaded")
 
     rospy.loginfo("Available: " + str(ort.get_available_providers()))
+
+    ort_model = ort.InferenceSession(model_path, providers=onnx_providers)
+    rospy.loginfo("Loaded")
+
     rospy.loginfo("Used: " + str(ort_model.get_providers()))
 
     input_shape = (1, 44)
