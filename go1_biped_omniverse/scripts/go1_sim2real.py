@@ -203,8 +203,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
         dim=-1,
     )
 
-    #obs = torch.unsqueeze(obs, 0)
-    #rospy.logwarn(obs.shape)
+    obs = torch.unsqueeze(obs, 0)
 
     return obs
 
@@ -282,6 +281,7 @@ def main():
     rospy.loginfo("#####################################################")
 
     rospy.loginfo("Warming Up...")
+
     outputs = ort_model.run(
         None,
         {"obs": np.zeros(input_shape).astype(np.float32)},
@@ -316,14 +316,17 @@ def main():
             temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
 
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
+            outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
-            outputs = ort_model.run(None, obs,)
-            mu = outputs[0].squeeze(1)
-            sigma = np.exp(outputs[1].squeeze(1))
-            actions = np.random.normal(mu, sigma)
+            mu = outputs[0][0, :]
+#            sigma = np.exp(outputs[1].squeeze())
+#            rospy.logwarn(sigma.shape)
+#            actions = np.random.normal(mu, sigma)
+
+            actions = mu
             nn_vals_sdk = network_to_sdk(actions)
 
-            for j_q in nn_vals_sdk:
+            for idx, j_q in enumerate(nn_vals_sdk):
                 tmp_cmd = MotorCmd()
 
                 tmp_cmd.mode = 0x0A
@@ -334,14 +337,15 @@ def main():
                 tmp_cmd.tau = 0.0
                 tmp_cmd.dq = 0.0
 
-                temp_low_cmd.motorCmd.append(tmp_cmd)
+                temp_low_cmd.motorCmd[idx] = tmp_cmd
 
 #            cmd_lock.acquire()
 #            low_cmd = temp_low_cmd
 #            cmd_lock.release()
-            last_actions = actions
+            last_actions = torch.from_numpy(actions).to(device)
 
             rate.sleep()
 
 
 main()
+v
