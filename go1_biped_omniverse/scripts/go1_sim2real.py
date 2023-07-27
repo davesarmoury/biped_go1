@@ -37,9 +37,6 @@ gravity_vec = torch.tensor([[0.0, 0.0, -1.0]], device=device)
 onnx_providers = ['CUDAExecutionProvider']
 #onnx_providers = ['TensorrtExecutionProvider']
 
-Kp = 50
-Kd = 5
-
 state_lock = threading.Lock()
 odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
@@ -231,6 +228,9 @@ def main():
     dof_names = list(named_default_joint_angles.keys())
     model_path = rospy.get_param("/model/path")
 
+    Kp = rospy.get_param("/env/control/stiffness")
+    Kd = rospy.get_param("/env/control/damping")
+
     default_dof_pos = []
     default_dof_pos_t = torch.zeros((len(dof_names)), dtype=torch.float, device=device, requires_grad=False)
     for i in range(len(dof_names)):
@@ -239,19 +239,21 @@ def main():
         default_dof_pos_t[i] = angle
         default_dof_pos.append(angle)
 
+    default_dof_pos_sdk = network_to_sdk(default_dof_pos)
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
+    default_dof_pos_sdk = torch.tensor(default_dof_pos_sdk, dtype=torch.float32, device=device)
 
-    last_actions = default_dof_pos
+    last_actions = default_dof_pos_sdk
     low_cmd = LowCmd()
-    low_cmd.head = [0xEE, 0xEF]
-    low_cmd.levelFlag = 0xff  # LOW LEVEL
+    low_cmd.head = [254, 239]
+    low_cmd.levelFlag = 255 # LOW LEVEL
 
     for i in range(12):
         low_cmd.motorCmd[i].mode = 0x0A
-        low_cmd.motorCmd[i].q = default_dof_pos[joint_map[i]]
+        low_cmd.motorCmd[i].q = default_dof_pos_sdk[i]
 
-        low_cmd.motorCmd[i].Kp = 5.0
-        low_cmd.motorCmd[i].Kd = 1.0
+        low_cmd.motorCmd[i].Kp = 0.0
+        low_cmd.motorCmd[i].Kd = 0.0
         low_cmd.motorCmd[i].tau = 0.0
         low_cmd.motorCmd[i].dq = 0.0
 
@@ -296,6 +298,35 @@ def main():
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
 
     rospy.Timer(rospy.Duration(1.0/500.0), publish_cmd)
+
+    rate = rospy.Rate(5)
+    Kp_step = Kp / 25.0
+    Kd_step = Kd / 25.0
+    Kd_temp = 0
+    Kp_temp = 0
+
+    temp_low_cmd = LowCmd()
+    temp_low_cmd.head = [254, 239]
+    temp_low_cmd.levelFlag = 255 # LOW LEVEL
+
+    rospy.loginfo("Standing...")
+
+    while Kp_temp < Kp:
+        for i in range(12):
+            temp_low_cmd.motorCmd[i].mode = 0x0A
+            temp_low_cmd.motorCmd[i].q = default_dof_pos_sdk[i]
+
+            temp_low_cmd.motorCmd[i].Kp = Kp_temp
+            temp_low_cmd.motorCmd[i].Kd = Kd_temp
+            temp_low_cmd.motorCmd[i].tau = 0.0
+            temp_low_cmd.motorCmd[i].dq = 0.0
+
+        cmd_lock.acquire()
+        low_cmd = temp_low_cmd
+        cmd_lock.release()
+        rate.sleep()
+        Kp_temp = Kp_temp + Kp_step
+        Kd_temp = Kd_temp + Kd_step
 
     rate = rospy.Rate(1)
 
@@ -348,4 +379,4 @@ def main():
 
 
 main()
-v
+
