@@ -82,7 +82,8 @@ def state_callback(msg):
     temp_joint_positions = []
     temp_joint_velocities = []
 
-    for j in msg.motorState:
+    for i in range(12):
+        j = msg.motorState[i]
         temp_joint_positions.append(j.q)
         temp_joint_velocities.append(j.dq)
 
@@ -183,9 +184,9 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
     root_transforms = get_transform()
     root_velocity = get_velocity()
-    dof_pos = get_joint_positions()
+
     dof_vel = torch.tensor(get_joint_velocities(), dtype=torch.float, device=device)
-    dof_pos = torch.tensor(dof_pos, dtype=torch.float, device=device)
+    dof_pos = torch.tensor(get_joint_positions(), dtype=torch.float, device=device)
 
     torso_position = root_transforms[0:3]
     torso_rotation = root_transforms[3:7]
@@ -223,6 +224,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     )
 
     obs = torch.unsqueeze(obs, 0)
+    rospy.logwarn(obs)
 
     return obs
 
@@ -255,7 +257,7 @@ def set_low_cmd(actions, p, d):
     low_cmd = temp_low_cmd
     cmd_lock.release()
 
-    last_actions = torch.tensor(remapped_actions, dtype=torch.float, device=device)
+    last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
 def main():
     global state_init, odom_init, low_cmd, cmd_lock, cmd_pub, current_cmd_vel, last_actions
@@ -369,15 +371,15 @@ def main():
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0, :]
-#            sigma = np.exp(outputs[1].squeeze())
-#            rospy.logwarn(sigma.shape)
+            sigma = np.exp(outputs[1].squeeze())
+
+#            rospy.logwarn(mu)
+#            rospy.logwarn(sigma)
 #            actions = np.random.normal(mu, sigma)
 
             actions = mu
 
             set_low_cmd(actions, Kp, Kd)
-
-            last_actions = torch.from_numpy(actions).to(device)
 
             rate.sleep()
 
