@@ -13,22 +13,20 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 
-#    NETWORK ORDER     SDK INDEX
-#
-#   "RR_hip_joint"        6
-#   "RL_hip_joint"        9
-#   "FL_hip_joint"        3
-#   "FR_hip_joint"        0
-#   "FL_thigh_joint"      4
-#   "FR_thigh_joint"      1
-#   "RL_thigh_joint"      10
-#   "RR_thigh_joint"      7
-#   "FL_calf_joint"       5
-#   "RL_calf_joint"       11
-#   "FR_calf_joint"       2
-#   "RR_calf_joint"       8
-
-joint_map = [6, 9, 3, 0, 4, 1, 10, 7, 5, 11, 2, 8]
+### JOINT ORDER ###
+#  FR_hip_joint   #
+#  FR_thigh_joint #
+#   FR_calf_joint #
+#  FL_hip_joint   #
+#  FL_thigh_joint #
+#  FL_calf_joint  #
+#  RR_hip_joint   #
+#  RR_thigh_joint #
+#  RR_calf_joint  #
+#  RL_hip_joint   #
+#  RL_thigh_joint #
+#  RL_calf_joint  #
+###################
 
 device = 'cuda'
 
@@ -40,22 +38,6 @@ onnx_providers = ['CUDAExecutionProvider']
 state_lock = threading.Lock()
 odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
-
-def network_to_sdk(j_in):
-    j_out = [None] * 12
-
-    for i in range(12):
-        j_out[joint_map[i]] = j_in[i]
-
-    return j_out
-
-def sdk_to_network(j_in):
-    j_out = []
-
-    for i in range(12):
-        j_out.append(j_in[joint_map[i]])
-
-    return j_out
 
 def state_callback(msg):
     global current_joint_positions, current_joint_velocities, state_init
@@ -161,8 +143,8 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
     root_transforms = get_transform()
     root_velocity = get_velocity()
-    dof_pos = sdk_to_network(get_joint_positions())
-    dof_vel = torch.tensor(sdk_to_network(get_joint_velocities()), dtype=torch.float, device=device)
+    dof_pos = get_joint_positions()
+    dof_vel = torch.tensor(get_joint_velocities(), dtype=torch.float, device=device)
     dof_pos = torch.tensor(dof_pos, dtype=torch.float, device=device)
 
     torso_position = root_transforms[0:3]
@@ -239,18 +221,16 @@ def main():
         default_dof_pos_t[i] = angle
         default_dof_pos.append(angle)
 
-    default_dof_pos_sdk = network_to_sdk(default_dof_pos)
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
-    default_dof_pos_sdk = torch.tensor(default_dof_pos_sdk, dtype=torch.float32, device=device)
 
-    last_actions = default_dof_pos_sdk
+    last_actions = default_dof_pos
     low_cmd = LowCmd()
     low_cmd.head = [254, 239]
     low_cmd.levelFlag = 255 # LOW LEVEL
 
     for i in range(12):
         low_cmd.motorCmd[i].mode = 0x0A
-        low_cmd.motorCmd[i].q = default_dof_pos_sdk[i]
+        low_cmd.motorCmd[i].q = default_dof_pos[i]
 
         low_cmd.motorCmd[i].Kp = 0.0
         low_cmd.motorCmd[i].Kd = 0.0
@@ -314,7 +294,7 @@ def main():
     while Kp_temp < Kp:
         for i in range(12):
             temp_low_cmd.motorCmd[i].mode = 0x0A
-            temp_low_cmd.motorCmd[i].q = default_dof_pos_sdk[i]
+            temp_low_cmd.motorCmd[i].q = default_dof_pos[i]
 
             temp_low_cmd.motorCmd[i].Kp = Kp_temp
             temp_low_cmd.motorCmd[i].Kd = Kd_temp
@@ -355,9 +335,8 @@ def main():
 #            actions = np.random.normal(mu, sigma)
 
             actions = mu
-            nn_vals_sdk = network_to_sdk(actions)
 
-            for idx, j_q in enumerate(nn_vals_sdk):
+            for idx, j_q in enumerate(actions):
                 tmp_cmd = MotorCmd()
 
                 tmp_cmd.mode = 0x0A
