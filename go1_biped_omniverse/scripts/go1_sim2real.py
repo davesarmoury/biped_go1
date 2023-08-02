@@ -19,7 +19,7 @@ import onnxruntime as ort
 #### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
 #### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
 
-#### SDK ORDER ####
+#### SDK ORDER #####
 # 0 FR_hip_joint   #
 # 1 FR_thigh_joint #
 # 2 FR_calf_joint  #
@@ -32,9 +32,9 @@ import onnxruntime as ort
 # 9 RL_hip_joint   #
 # 0 RL_thigh_joint #
 # 1 RL_calf_joint  #
-###################
+####################
 
-### OMNI ORDER ####
+### OMNI ORDER #####
 # 0 FL_hip_joint   #
 # 1 FR_hip_joint   #
 # 2 RL_hip_joint   #
@@ -47,10 +47,10 @@ import onnxruntime as ort
 # 9 FR_calf_joint  #
 # 0 RL_calf_joint  #
 # 1 RR_calf_joint  #
-###################
+####################
 
-sdk_to_omni = [1, 5, 9, 0, 4, 8, 3, 7, 11, 2, 6, 10]
-omni_to_sdk = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
+omni_to_sdk = [1, 5, 9, 0, 4, 8, 3, 7, 11, 2, 6, 10]
+sdk_to_omni = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
 
 device = 'cuda'
 
@@ -64,10 +64,15 @@ odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
 
 def remap_order(j_in, indices):
+    if type(j_in) == torch.Tensor:
+        j_values = j_in.tolist()
+    else:
+        j_values = j_in
+
     j_out = []
 
     for i in indices:
-        j_out.append = j_in[i]
+        j_out.append(j_values[i])
 
     return j_out
 
@@ -245,15 +250,15 @@ def set_low_cmd(actions, p, d):
         temp_low_cmd.motorCmd[i].Kd = d
         temp_low_cmd.motorCmd[i].tau = 0.0
         temp_low_cmd.motorCmd[i].dq = 0.0
-    
+
     cmd_lock.acquire()
     low_cmd = temp_low_cmd
     cmd_lock.release()
 
-    last_actions = remapped_actions
+    last_actions = torch.tensor(remapped_actions, dtype=torch.float, device=device)
 
 def main():
-    global state_init, odom_init, low_cmd, cmd_lock, cmd_pub, current_cmd_vel
+    global state_init, odom_init, low_cmd, cmd_lock, cmd_pub, current_cmd_vel, last_actions
 
     rospy.init_node('horizontal_controller', anonymous=True)
 
@@ -272,11 +277,10 @@ def main():
     Kd = rospy.get_param("/env/control/damping")
 
     default_dof_pos = []
-    default_dof_pos_t = torch.zeros((len(dof_names)), dtype=torch.float, device=device, requires_grad=False)
+
     for i in range(len(dof_names)):
         name = dof_names[i]
         angle = named_default_joint_angles[name]
-        default_dof_pos_t[i] = angle
         default_dof_pos.append(angle)
 
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
