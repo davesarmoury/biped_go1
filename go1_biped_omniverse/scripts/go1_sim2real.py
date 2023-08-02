@@ -13,20 +13,44 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 
-### JOINT ORDER ###
-#  FR_hip_joint   #
-#  FR_thigh_joint #
-#   FR_calf_joint #
-#  FL_hip_joint   #
-#  FL_thigh_joint #
-#  FL_calf_joint  #
-#  RR_hip_joint   #
-#  RR_thigh_joint #
-#  RR_calf_joint  #
-#  RL_hip_joint   #
-#  RL_thigh_joint #
-#  RL_calf_joint  #
+#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
+#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
+#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
+#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
+#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
+
+#### SDK ORDER ####
+# 0 FR_hip_joint   #
+# 1 FR_thigh_joint #
+# 2 FR_calf_joint  #
+# 3 FL_hip_joint   #
+# 4 FL_thigh_joint #
+# 5 FL_calf_joint  #
+# 6 RR_hip_joint   #
+# 7 RR_thigh_joint #
+# 8 RR_calf_joint  #
+# 9 RL_hip_joint   #
+# 0 RL_thigh_joint #
+# 1 RL_calf_joint  #
 ###################
+
+### OMNI ORDER ####
+# 0 FL_hip_joint   #
+# 1 FR_hip_joint   #
+# 2 RL_hip_joint   #
+# 3 RR_hip_joint   #
+# 4 FL_thigh_joint #
+# 5 FR_thigh_joint #
+# 6 RL_thigh_joint #
+# 7 RR_thigh_joint #
+# 8 FL_calf_joint  #
+# 9 FR_calf_joint  #
+# 0 RL_calf_joint  #
+# 1 RR_calf_joint  #
+###################
+
+sdk_to_omni = [1, 5, 9, 0, 4, 8, 3, 7, 11, 2, 6, 10]
+omni_to_sdk = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
 
 device = 'cuda'
 
@@ -39,6 +63,14 @@ state_lock = threading.Lock()
 odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
 
+def remap_order(j_in, indices):
+    j_out = []
+
+    for i in indices:
+        j_out.append = j_in[i]
+
+    return j_out
+
 def state_callback(msg):
     global current_joint_positions, current_joint_velocities, state_init
 
@@ -48,6 +80,9 @@ def state_callback(msg):
     for j in msg.motorState:
         temp_joint_positions.append(j.q)
         temp_joint_velocities.append(j.dq)
+
+    temp_joint_positions = remap_order(temp_joint_positions, sdk_to_omni)
+    temp_joint_velocities = remap_order(temp_joint_velocities, sdk_to_omni)
 
     state_lock.acquire()
     current_joint_positions = temp_joint_positions
@@ -93,7 +128,7 @@ def get_transform():
     ori = current_odom.pose.pose.orientation
     odom_lock.release()
 
-    return [pos.x, pos.y, pos.z, ori.x, ori.y, ori.z, ori.w]
+    return [pos.x, pos.y, pos.z, ori.w, ori.x, ori.y, ori.z]
 
 def get_velocity():
     global current_odom, odom_init
@@ -194,8 +229,31 @@ def publish_cmd(te):
         cmd_pub.publish(low_cmd)
         cmd_lock.release()
 
+def set_low_cmd(actions, p, d):
+    global cmd_lock, low_cmd, last_actions
+
+    remapped_actions = remap_order(actions, omni_to_sdk)
+    temp_low_cmd = LowCmd()
+    temp_low_cmd.head = [254, 239]
+    temp_low_cmd.levelFlag = 255 # LOW LEVEL
+
+    for i in range(12):
+        temp_low_cmd.motorCmd[i].mode = 0x0A
+        temp_low_cmd.motorCmd[i].q = remapped_actions[i]
+
+        temp_low_cmd.motorCmd[i].Kp = p
+        temp_low_cmd.motorCmd[i].Kd = d
+        temp_low_cmd.motorCmd[i].tau = 0.0
+        temp_low_cmd.motorCmd[i].dq = 0.0
+    
+    cmd_lock.acquire()
+    low_cmd = temp_low_cmd
+    cmd_lock.release()
+
+    last_actions = remapped_actions
+
 def main():
-    global state_init, odom_init, low_cmd, cmd_lock, low_cmd, cmd_pub, current_cmd_vel
+    global state_init, odom_init, low_cmd, cmd_lock, cmd_pub, current_cmd_vel
 
     rospy.init_node('horizontal_controller', anonymous=True)
 
@@ -223,19 +281,7 @@ def main():
 
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
 
-    last_actions = default_dof_pos
-    low_cmd = LowCmd()
-    low_cmd.head = [254, 239]
-    low_cmd.levelFlag = 255 # LOW LEVEL
-
-    for i in range(12):
-        low_cmd.motorCmd[i].mode = 0x0A
-        low_cmd.motorCmd[i].q = default_dof_pos[i]
-
-        low_cmd.motorCmd[i].Kp = 0.0
-        low_cmd.motorCmd[i].Kd = 0.0
-        low_cmd.motorCmd[i].tau = 0.0
-        low_cmd.motorCmd[i].dq = 0.0
+    set_low_cmd(default_dof_pos, 0, 0)
 
     rospy.loginfo("ONNX: " + str(onnx.__version__))
 
@@ -292,18 +338,7 @@ def main():
     rospy.loginfo("Standing...")
 
     while Kp_temp < Kp:
-        for i in range(12):
-            temp_low_cmd.motorCmd[i].mode = 0x0A
-            temp_low_cmd.motorCmd[i].q = default_dof_pos[i]
-
-            temp_low_cmd.motorCmd[i].Kp = Kp_temp
-            temp_low_cmd.motorCmd[i].Kd = Kd_temp
-            temp_low_cmd.motorCmd[i].tau = 0.0
-            temp_low_cmd.motorCmd[i].dq = 0.0
-
-        cmd_lock.acquire()
-        low_cmd = temp_low_cmd
-        cmd_lock.release()
+        set_low_cmd(default_dof_pos, Kp_temp, Kd_temp)
         rate.sleep()
         Kp_temp = Kp_temp + Kp_step
         Kd_temp = Kd_temp + Kd_step
@@ -336,22 +371,8 @@ def main():
 
             actions = mu
 
-            for idx, j_q in enumerate(actions):
-                tmp_cmd = MotorCmd()
+            set_low_cmd(actions, Kp, Kd)
 
-                tmp_cmd.mode = 0x0A
-                tmp_cmd.q = j_q
-
-                tmp_cmd.Kp = Kp
-                tmp_cmd.Kd = Kd
-                tmp_cmd.tau = 0.0
-                tmp_cmd.dq = 0.0
-
-                temp_low_cmd.motorCmd[idx] = tmp_cmd
-
-#            cmd_lock.acquire()
-#            low_cmd = temp_low_cmd
-#            cmd_lock.release()
             last_actions = torch.from_numpy(actions).to(device)
 
             rate.sleep()
