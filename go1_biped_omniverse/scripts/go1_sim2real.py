@@ -14,10 +14,6 @@ import onnx
 import onnxruntime as ort
 
 #### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
-#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
-#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
-#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
-#### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
 
 #### SDK ORDER #####
 # 0 FR_hip_joint   #
@@ -49,8 +45,17 @@ import onnxruntime as ort
 # 1 RR_calf_joint  #
 ####################
 
-omni_to_sdk = [1, 5, 9, 0, 4, 8, 3, 7, 11, 2, 6, 10]
-sdk_to_omni = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
+SDK_STRINGS = ["FR_hip_joint","FR_thigh_joint","FR_calf_joint","FL_hip_joint","FL_thigh_joint","FL_calf_joint","RR_hip_joint","RR_thigh_joint","RR_calf_joint","RL_hip_joint","RL_thigh_joint","RL_calf_joint"]
+OMNI_STRINGS = ["FL_hip_joint","FR_hip_joint","RL_hip_joint","RR_hip_joint","FL_thigh_joint","FR_thigh_joint","RL_thigh_joint","RR_thigh_joint","FL_calf_joint","FR_calf_joint","RL_calf_joint","RR_calf_joint"]
+
+omni_to_sdk = []
+sdk_to_omni = []
+
+for i in OMNI_STRINGS:
+    sdk_to_omni.append(SDK_STRINGS.index(i))
+
+for i in SDK_STRINGS:
+    omni_to_sdk.append(OMNI_STRINGS.index(i))
 
 device = 'cuda'
 
@@ -86,9 +91,6 @@ def state_callback(msg):
         j = msg.motorState[i]
         temp_joint_positions.append(j.q)
         temp_joint_velocities.append(j.dq)
-
-    temp_joint_positions = remap_order(temp_joint_positions, sdk_to_omni)
-    temp_joint_velocities = remap_order(temp_joint_velocities, sdk_to_omni)
 
     state_lock.acquire()
     current_joint_positions = temp_joint_positions
@@ -153,6 +155,8 @@ def get_joint_positions():
     temp_joint_positions = current_joint_positions
     state_lock.release()
 
+    temp_joint_positions = remap_order(temp_joint_positions, sdk_to_omni)
+
     return temp_joint_positions
 
 def get_joint_velocities():
@@ -161,6 +165,8 @@ def get_joint_velocities():
     state_lock.acquire()
     temp_joint_velocities = current_joint_velocities
     state_lock.release()
+
+    temp_joint_velocities = remap_order(temp_joint_velocities, sdk_to_omni)
 
     return temp_joint_velocities
 
@@ -200,7 +206,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     ang_velocity = torch.tensor([ang_velocity], dtype=torch.float, device=device)
 
     #base_lin_vel = quat_rotate_inverse(torso_rotation, velocity) * lin_vel_scale
-    base_ang_vel = quat_rotate_inverse(torso_rotation, ang_velocity) * ang_vel_scale
+    base_ang_vel = ang_velocity * ang_vel_scale
     projected_gravity = quat_rotate(torso_rotation, gravity_vec)
     dof_pos_scaled = (dof_pos - default_dof_pos) * dof_pos_scale
 
@@ -224,7 +230,6 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     )
 
     obs = torch.unsqueeze(obs, 0)
-    rospy.logwarn(obs)
 
     return obs
 
@@ -378,7 +383,8 @@ def main():
 #            actions = np.random.normal(mu, sigma)
 
             actions = mu
-
+            rospy.logwarn(actions)
+            actions = default_dof_pos
             set_low_cmd(actions, Kp, Kd)
 
             rate.sleep()
