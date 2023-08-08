@@ -57,6 +57,9 @@ for i in OMNI_STRINGS:
 for i in SDK_STRINGS:
     omni_to_sdk.append(OMNI_STRINGS.index(i))
 
+SDK_RATE = 500.0
+SDK_DT = 1.0/SDK_RATE
+
 device = 'cuda'
 
 gravity_vec = torch.tensor([[0.0, 0.0, -1.0]], device=device)
@@ -173,18 +176,18 @@ def get_joint_velocities():
 def get_commands():
     global cmd_vel_lock, current_cmd_vel
 
-    cmd_lock.acquire()
+    cmd_vel_lock.acquire()
     temp_cmd_vel = current_cmd_vel
-    cmd_lock.release()
+    cmd_vel_lock.release()
 
     return [temp_cmd_vel.linear.x, temp_cmd_vel.angular.z]
 
 def cmd_vel_callback(msg):
     global cmd_vel_lock, current_cmd_vel
 
-    cmd_lock.acquire()
+    cmd_vel_lock.acquire()
     current_cmd_vel = msg
-    cmd_lock.release()
+    cmd_vel_lock.release()
 
 def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos):
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
@@ -233,39 +236,49 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
 
     return obs
 
+def set_gains(kp, kd):
+    global Kp, Kd
+    cmd_lock.acquire()
+    Kp = kp
+    Kd = kd
+    cmd_lock.release()
+
 def publish_cmd(te):
-    global cmd_lock, low_cmd, cmd_pub
+    global cmd_lock, current_targets, current_actions, cmd_pub, Kp, Kd
 
     if not rospy.is_shutdown():
         cmd_lock.acquire()
-        cmd_pub.publish(low_cmd)
+        for i in range(12):
+            current_targets.motorCmd[i].q = current_targets.motorCmd[i].q + current_actions[i]
+            current_targets.motorCmd[i].Kp = Kp
+            current_targets.motorCmd[i].Kd = Kd
+        
+        cmd_pub.publish(current_targets)
         cmd_lock.release()
 
-def set_low_cmd(actions, p, d):
-    global cmd_lock, low_cmd, last_actions
+def set_current_targets(targets):
+    global cmd_lock, Kp, Kd
 
-    remapped_actions = remap_order(actions, omni_to_sdk)
-    temp_low_cmd = LowCmd()
-    temp_low_cmd.head = [254, 239]
-    temp_low_cmd.levelFlag = 255 # LOW LEVEL
+    targets_remapped = remap_order(targets, omni_to_sdk)
 
-    for i in range(12):
-        temp_low_cmd.motorCmd[i].mode = 0x0A
-        temp_low_cmd.motorCmd[i].q = remapped_actions[i]
+    if not rospy.is_shutdown():
+        cmd_lock.acquire()
+        for i in range(12):
+            current_targets.motorCmd[i].q = targets_remapped[i]
+            current_targets.motorCmd[i].Kp = Kp
+            current_targets.motorCmd[i].Kd = Kd
+        
+        cmd_lock.release()
 
-        temp_low_cmd.motorCmd[i].Kp = p
-        temp_low_cmd.motorCmd[i].Kd = d
-        temp_low_cmd.motorCmd[i].tau = 0.0
-        temp_low_cmd.motorCmd[i].dq = 0.0
+def set_current_actions(actions, dt, action_scale):
+    global cmd_lock, current_actions
 
     cmd_lock.acquire()
-    low_cmd = temp_low_cmd
+    current_actions = remap_order(actions, omni_to_sdk) * dt * action_scale
     cmd_lock.release()
 
-    last_actions = torch.tensor(actions, dtype=torch.float, device=device)
-
 def main():
-    global state_init, odom_init, low_cmd, cmd_lock, cmd_pub, current_cmd_vel, last_actions
+    global state_init, odom_init, cmd_lock, cmd_pub, current_cmd_vel, last_actions, current_targets
 
     rospy.init_node('horizontal_controller', anonymous=True)
 
@@ -282,6 +295,7 @@ def main():
 
     Kp = rospy.get_param("/env/control/stiffness")
     Kd = rospy.get_param("/env/control/damping")
+    action_scale = rospy.get_param("/env/control/actionScale")
 
     default_dof_pos = []
 
@@ -292,7 +306,16 @@ def main():
 
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
 
-    set_low_cmd(default_dof_pos, 0, 0)
+    current_targets = LowCmd()
+    current_targets.head = [254, 239]
+    current_targets.levelFlag = 255 # LOW LEVEL
+
+    for i in range(12):
+        current_targets.motorCmd[i].mode = 0x0A
+
+    set_current_actions([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0], SDK_DT, action_scale)
+    set_current_targets(default_dof_pos)
+    last_actions = torch.tensor([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0], dtype=torch.float, device=device)
 
     rospy.loginfo("ONNX: " + str(onnx.__version__))
 
@@ -334,7 +357,7 @@ def main():
     rospy.Subscriber("/odometry/filtered", Odometry, odom_callback)
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
 
-    rospy.Timer(rospy.Duration(1.0/500.0), publish_cmd)
+    rospy.Timer(rospy.Duration(SDK_DT), publish_cmd)
 
     rate = rospy.Rate(5)
     Kp_step = Kp / 25.0
@@ -342,14 +365,10 @@ def main():
     Kd_temp = 0
     Kp_temp = 0
 
-    temp_low_cmd = LowCmd()
-    temp_low_cmd.head = [254, 239]
-    temp_low_cmd.levelFlag = 255 # LOW LEVEL
-
     rospy.loginfo("Standing...")
 
     while Kp_temp < Kp:
-        set_low_cmd(default_dof_pos, Kp_temp, Kd_temp)
+        set_gains(Kp_temp, Kd_temp)
         rate.sleep()
         Kp_temp = Kp_temp + Kp_step
         Kd_temp = Kd_temp + Kd_step
@@ -368,10 +387,6 @@ def main():
 
     with torch.no_grad():
         while not rospy.is_shutdown():
-            temp_low_cmd = LowCmd()
-            temp_low_cmd.head = [0xFE, 0xEF]
-            temp_low_cmd.levelFlag = 0xff  # LOW LEVEL
-
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
@@ -385,7 +400,8 @@ def main():
             actions = mu
             rospy.logwarn(actions)
             actions = default_dof_pos
-            set_low_cmd(actions, Kp, Kd)
+            set_current_actions(actions, SDK_DT, action_scale)
+            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             rate.sleep()
 
