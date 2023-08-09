@@ -70,6 +70,13 @@ onnx_providers = ['CUDAExecutionProvider']
 state_lock = threading.Lock()
 odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
+cmd_vel_lock = threading.Lock()
+
+def rescale_actions(actions, low=-1.0, high=1.0):
+    d = (high - low) / 2.0
+    m = (high + low) / 2.0
+    scaled_actions =  actions * d + m
+    return scaled_actions
 
 def remap_order(j_in, indices):
     if type(j_in) == torch.Tensor:
@@ -252,12 +259,12 @@ def publish_cmd(te):
             current_targets.motorCmd[i].q = current_targets.motorCmd[i].q + current_actions[i]
             current_targets.motorCmd[i].Kp = Kp
             current_targets.motorCmd[i].Kd = Kd
-        
+
         cmd_pub.publish(current_targets)
         cmd_lock.release()
 
 def set_current_targets(targets):
-    global cmd_lock, Kp, Kd
+    global cmd_lock, current_targets
 
     targets_remapped = remap_order(targets, omni_to_sdk)
 
@@ -265,16 +272,19 @@ def set_current_targets(targets):
         cmd_lock.acquire()
         for i in range(12):
             current_targets.motorCmd[i].q = targets_remapped[i]
-            current_targets.motorCmd[i].Kp = Kp
-            current_targets.motorCmd[i].Kd = Kd
-        
+
         cmd_lock.release()
 
 def set_current_actions(actions, dt, action_scale):
     global cmd_lock, current_actions
 
+    temp_current_actions = remap_order(actions, omni_to_sdk)
+
+    for i in range(len(temp_current_actions)):
+        temp_current_actions[i] = temp_current_actions[i] * dt * action_scale
+
     cmd_lock.acquire()
-    current_actions = remap_order(actions, omni_to_sdk) * dt * action_scale
+    current_actions = temp_current_actions
     cmd_lock.release()
 
 def main():
@@ -295,7 +305,7 @@ def main():
 
     Kp = rospy.get_param("/env/control/stiffness")
     Kd = rospy.get_param("/env/control/damping")
-    action_scale = rospy.get_param("/env/control/actionScale")
+    action_scale = float(rospy.get_param("/env/control/actionScale"))
 
     default_dof_pos = []
 
@@ -313,9 +323,11 @@ def main():
     for i in range(12):
         current_targets.motorCmd[i].mode = 0x0A
 
-    set_current_actions([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0], SDK_DT, action_scale)
+    set_gains(0.0, 0.0)
+
+    set_current_actions([0.0]*12, SDK_DT, action_scale)
     set_current_targets(default_dof_pos)
-    last_actions = torch.tensor([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0], dtype=torch.float, device=device)
+    last_actions = torch.tensor([0.0]*12, dtype=torch.float, device=device)
 
     rospy.loginfo("ONNX: " + str(onnx.__version__))
 
@@ -360,18 +372,20 @@ def main():
     rospy.Timer(rospy.Duration(SDK_DT), publish_cmd)
 
     rate = rospy.Rate(5)
-    Kp_step = Kp / 25.0
-    Kd_step = Kd / 25.0
+    Kp_step = Kp / 25.0 # 5 Seconds
+    Kd_step = Kd / 25.0 # 5 Seconds
     Kd_temp = 0
     Kp_temp = 0
 
-    rospy.loginfo("Standing...")
+    rospy.loginfo("Standing... (Ramping PD Values)")
 
     while Kp_temp < Kp:
         set_gains(Kp_temp, Kd_temp)
         rate.sleep()
         Kp_temp = Kp_temp + Kp_step
         Kd_temp = Kd_temp + Kd_step
+
+    rospy.loginfo("Done")
 
     rate = rospy.Rate(1)
 
@@ -383,23 +397,18 @@ def main():
 
     rospy.loginfo("Initialized")
 
-    rate = rospy.Rate(14)
+    rate = rospy.Rate(30)
 
     with torch.no_grad():
         while not rospy.is_shutdown():
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
+            rospy.loginfo(obs.tolist())
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
-            mu = outputs[0][0, :]
-            sigma = np.exp(outputs[1].squeeze())
+            actions = outputs[0][0, :]
+            actions = rescale_actions(actions)
+            rospy.loginfo(str(actions))
 
-#            rospy.logwarn(mu)
-#            rospy.logwarn(sigma)
-#            actions = np.random.normal(mu, sigma)
-
-            actions = mu
-            rospy.logwarn(actions)
-            actions = default_dof_pos
             set_current_actions(actions, SDK_DT, action_scale)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
