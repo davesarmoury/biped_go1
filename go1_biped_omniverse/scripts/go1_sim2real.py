@@ -45,6 +45,18 @@ import onnxruntime as ort
 # 1 RR_calf_joint  #
 ####################
 
+joint_limit_tolerance = 0.05
+
+Hip_max = 1.047 - joint_limit_tolerance
+Hip_min = -1.047 + joint_limit_tolerance
+Thigh_max = 2.966 - joint_limit_tolerance
+Thigh_min = -0.663 + joint_limit_tolerance
+Calf_max = -0.837 - joint_limit_tolerance
+Calf_min = -2.721 + joint_limit_tolerance
+
+min_limits = [Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min]
+max_limits = [Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max]
+
 SDK_STRINGS = ["FR_hip_joint","FR_thigh_joint","FR_calf_joint","FL_hip_joint","FL_thigh_joint","FL_calf_joint","RR_hip_joint","RR_thigh_joint","RR_calf_joint","RL_hip_joint","RL_thigh_joint","RL_calf_joint"]
 OMNI_STRINGS = ["FL_hip_joint","FR_hip_joint","RL_hip_joint","RR_hip_joint","FL_thigh_joint","FR_thigh_joint","RL_thigh_joint","RR_thigh_joint","FL_calf_joint","FR_calf_joint","RL_calf_joint","RR_calf_joint"]
 
@@ -72,10 +84,23 @@ odom_lock = threading.Lock()
 cmd_lock = threading.Lock()
 cmd_vel_lock = threading.Lock()
 
+def joint_limit_clamp(in_vals):
+    out_vals = []
+    for i in range(len(in_vals)):
+        out_vals.append(max(min_limits[i], min(max_limits[i], in_vals[i])))
+
+    return out_vals
+
 def rescale_actions(actions, low=-1.0, high=1.0):
     d = (high - low) / 2.0
     m = (high + low) / 2.0
-    scaled_actions =  actions * d + m
+
+    scaled_actions = []
+
+    for a in actions:
+        a2 = max(-1.0, min(1.0, a))
+        scaled_actions.append(a2 * d + m)
+
     return scaled_actions
 
 def remap_order(j_in, indices):
@@ -253,10 +278,17 @@ def set_gains(kp, kd):
 def publish_cmd(te):
     global cmd_lock, current_targets, current_actions, cmd_pub, Kp, Kd
 
+    qs = []
+
+    for i in range(12):
+        qs.append(current_targets.motorCmd[i].q + current_actions[i])
+
+    qs = joint_limit_clamp(qs)
+
     if not rospy.is_shutdown():
         cmd_lock.acquire()
         for i in range(12):
-            current_targets.motorCmd[i].q = current_targets.motorCmd[i].q + current_actions[i]
+            current_targets.motorCmd[i].q = qs[i]
             current_targets.motorCmd[i].Kp = Kp
             current_targets.motorCmd[i].Kd = Kd
 
@@ -275,13 +307,13 @@ def set_current_targets(targets):
 
         cmd_lock.release()
 
-def set_current_actions(actions, dt, action_scale):
+def set_current_actions(actions, dt):
     global cmd_lock, current_actions
 
     temp_current_actions = remap_order(actions, omni_to_sdk)
 
     for i in range(len(temp_current_actions)):
-        temp_current_actions[i] = temp_current_actions[i] * dt * action_scale
+        temp_current_actions[i] = temp_current_actions[i] * dt
 
     cmd_lock.acquire()
     current_actions = temp_current_actions
@@ -305,7 +337,6 @@ def main():
 
     Kp = rospy.get_param("/env/control/stiffness")
     Kd = rospy.get_param("/env/control/damping")
-    action_scale = float(rospy.get_param("/env/control/actionScale"))
 
     default_dof_pos = []
 
@@ -325,7 +356,7 @@ def main():
 
     set_gains(0.0, 0.0)
 
-    set_current_actions([0.0]*12, SDK_DT, action_scale)
+    set_current_actions([0.0]*12, SDK_DT)
     set_current_targets(default_dof_pos)
     last_actions = torch.tensor([0.0]*12, dtype=torch.float, device=device)
 
@@ -352,14 +383,6 @@ def main():
     input_shape = (1, 44)
     output_shape = (1, 12)
 
-    rospy.loginfo("#####################################################")
-
-    rospy.loginfo("Warming Up...")
-
-    outputs = ort_model.run(
-        None,
-        {"obs": np.zeros(input_shape).astype(np.float32)},
-    )
     rospy.loginfo("#####################################################")
 
     current_cmd_vel = Twist()
@@ -397,23 +420,31 @@ def main():
 
     rospy.loginfo("Initialized")
 
-    rate = rospy.Rate(30)
+    rate = rospy.Rate(33)
 
+    warmup = True
+    rospy.loginfo("Warming Up...")
+    warmup_count = 30
     with torch.no_grad():
         while not rospy.is_shutdown():
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
-            rospy.loginfo(obs.tolist())
-            outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
+
+            outputs = ort_model.run(["actions"], {"obs": obs.cpu().numpy()}, )
 
             actions = outputs[0][0, :]
             actions = rescale_actions(actions)
-            rospy.loginfo(str(actions))
 
-            set_current_actions(actions, SDK_DT, action_scale)
+            if warmup:
+                warmup_count = warmup_count - 1
+                if warmup_count <= 0:
+                    warmup = False
+                    rospy.loginfo("Go!")
+                actions = [0.0] * 12
+
+            set_current_actions(actions, SDK_DT)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             rate.sleep()
-
 
 main()
 
