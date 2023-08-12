@@ -254,7 +254,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
         requires_grad=False,
         device=device,
     )
-
+    rospy.loginfo(projected_gravity[0].tolist())
     obs = torch.cat(
         (
             #base_lin_vel,
@@ -450,7 +450,7 @@ def main():
 
             nn_time = end - start
             if nn_time >= CONTROL_DT:
-                rospy.warn("LOOP EXECUTION TIME LONG")
+                rospy.logwarn("LOOP EXECUTION TIME (" + str(nn_time) + ")")
             else:
                 rospy.sleep(CONTROL_DT - nn_time)
 
