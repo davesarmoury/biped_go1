@@ -11,4 +11,5 @@ pip3 install onnxruntime_gpu-1.12.1-cp38-cp38-linux_aarch64.whl
 rm onnxruntime_gpu-1.12.1-cp38-cp38-linux_aarch64.whl
 pip3 install onnx==1.12.0
 pip3 install protobuf==3.20.3
+pip3 install torchvision==v0.15.1
 
