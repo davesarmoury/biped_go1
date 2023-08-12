@@ -9,6 +9,7 @@ from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
 import numpy as np
+import time
 
 import onnx
 import onnxruntime as ort
@@ -71,6 +72,9 @@ for i in SDK_STRINGS:
 
 SDK_RATE = 500.0
 SDK_DT = 1.0/SDK_RATE
+
+CONTROL_RATE = 33.0
+CONTROL_DT = 1.0/CONTROL_RATE
 
 device = 'cuda'
 
@@ -420,19 +424,19 @@ def main():
 
     rospy.loginfo("Initialized")
 
-    rate = rospy.Rate(33)
-
     warmup = True
     rospy.loginfo("Warming Up...")
     warmup_count = 30
     with torch.no_grad():
         while not rospy.is_shutdown():
+            start = time.time()
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
 
             outputs = ort_model.run(["actions"], {"obs": obs.cpu().numpy()}, )
 
             actions = outputs[0][0, :]
             actions = rescale_actions(actions)
+            end = time.time()
 
             if warmup:
                 warmup_count = warmup_count - 1
@@ -444,7 +448,11 @@ def main():
             set_current_actions(actions, SDK_DT)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
-            rate.sleep()
+            nn_time = end - start
+            if nn_time >= CONTROL_DT:
+                rospy.warn("LOOP EXECUTION TIME LONG")
+            else:
+                rospy.sleep(CONTROL_DT - nn_time)
 
 main()
 
