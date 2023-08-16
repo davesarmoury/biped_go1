@@ -393,7 +393,7 @@ def main():
 
     cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
     rospy.Subscriber("/low_state", LowState, state_callback)
-    rospy.Subscriber("/odometry/filtered", Odometry, odom_callback)
+    rospy.Subscriber("/nav/odom", Odometry, odom_callback)
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
 
     rospy.Timer(rospy.Duration(SDK_DT), publish_cmd)
@@ -432,7 +432,7 @@ def main():
             start = time.time()
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
 
-            outputs = ort_model.run(["actions"], {"obs": obs.cpu().numpy()}, )
+            outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             actions = outputs[0][0, :]
             actions = rescale_actions(actions)
