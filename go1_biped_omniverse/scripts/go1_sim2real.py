@@ -70,12 +70,6 @@ for i in OMNI_STRINGS:
 for i in SDK_STRINGS:
     omni_to_sdk.append(OMNI_STRINGS.index(i))
 
-SDK_RATE = 500.0
-SDK_DT = 1.0/SDK_RATE
-
-CONTROL_RATE = 33.0
-CONTROL_DT = 1.0/CONTROL_RATE
-
 device = 'cuda'
 
 gravity_vec = torch.tensor([[0.0, 0.0, -1.0]], device=device)
@@ -333,6 +327,18 @@ def main():
 
     Kp = rospy.get_param("/env/control/stiffness")
     Kd = rospy.get_param("/env/control/damping")
+    action_scale = rospy.get_param("/env/control/actionScale")
+
+    clip_observations = rospy.get_param("/env/clipObservations")
+    clip_actions = rospy.get_param("/env/clipActions")
+
+    SDK_RATE = 500.0
+    SDK_DT = 1.0/SDK_RATE
+
+    control_freq_inv = rospy.get_param("/env/controlFrequencyInv")
+    sim_dt = rospy.get_param("/sim/dt")
+    control_rate = 1.0/(sim_dt * control_freq_inv)
+    control_dt = 1.0/control_rate
 
     default_dof_pos = []
 
@@ -425,8 +431,10 @@ def main():
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
 
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
+            mu = outputs[0][0]
+            sigma = np.exp(outputs[1][0])
+            actions = np.random.normal(mu, sigma)
 
-            actions = outputs[0][0, :]
             actions = rescale_actions(actions)
             end = time.time()
 
@@ -436,14 +444,14 @@ def main():
                     warmup = False
                     rospy.loginfo("Go!")
             else:
-                set_current_actions(actions, 0.01, 15.0)
+                set_current_actions(actions, sim_dt, action_scale)
                 last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             nn_time = end - start
-            if nn_time >= CONTROL_DT:
+            if nn_time >= control_dt:
                 rospy.logwarn("LOOP EXECUTION TIME (" + str(nn_time) + ")")
             else:
-                rospy.sleep(CONTROL_DT - nn_time)
+                rospy.sleep(control_dt - nn_time)
 
 main()
 
