@@ -175,7 +175,7 @@ def get_transform():
     ori = current_odom.pose.pose.orientation
     odom_lock.release()
 
-    return [pos.x, pos.y, pos.z, ori.w, ori.x, ori.y, ori.z]
+    return [pos.x, pos.y, pos.z], [ori.w, ori.x, ori.y, ori.z]
 
 def get_velocity():
     global current_odom, odom_init
@@ -185,7 +185,7 @@ def get_velocity():
     rpy = current_odom.twist.twist.angular
     odom_lock.release()
 
-    return [linear.x, linear.y, linear.z, rpy.x, rpy.y, rpy.z]
+    return [linear.x, linear.y, linear.z], [rpy.x, rpy.y, rpy.z]
 
 def get_joint_positions():
     global state_lock, current_joint_positions
@@ -227,24 +227,17 @@ def cmd_vel_callback(msg):
 
 def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos):
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
-    root_transforms = get_transform()
-    root_velocity = get_velocity()
-
-    dof_vel = torch.tensor(get_joint_velocities(), dtype=torch.float, device=device)
-    dof_pos = torch.tensor(get_joint_positions(), dtype=torch.float, device=device)
-
-    torso_position = root_transforms[0:3]
-    torso_rotation = root_transforms[3:7]
+    torso_position, torso_rotation = get_transform()
 
     torso_position = torch.tensor([torso_position], dtype=torch.float, device=device)
     torso_rotation = torch.tensor([torso_rotation], dtype=torch.float, device=device)
 
-    #velocity = root_velocity[0:3]
-    #velocity = torch.tensor(velocity, dtype=torch.float32)
-    ang_velocity = root_velocity[3:6]
-    ang_velocity = torch.tensor([ang_velocity], dtype=torch.float, device=device)
+    dof_vel = torch.tensor(get_joint_velocities(), dtype=torch.float, device=device)
+    dof_pos = torch.tensor(get_joint_positions(), dtype=torch.float, device=device)
 
-    #base_lin_vel = quat_rotate_inverse(torso_rotation, velocity) * lin_vel_scale
+    root_velocity, ang_velocity = get_velocity()
+    ang_velocity = torch.tensor(ang_velocity, dtype=torch.float, device=device)
+
     base_ang_vel = ang_velocity * ang_vel_scale
     projected_gravity = quat_rotate(torso_rotation, gravity_vec)
     dof_pos_scaled = (dof_pos - default_dof_pos) * dof_pos_scale
@@ -254,11 +247,10 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
         requires_grad=False,
         device=device,
     )
-    rospy.loginfo(projected_gravity[0].tolist())
+
     obs = torch.cat(
         (
-            #base_lin_vel,
-            base_ang_vel[0],
+            base_ang_vel,
             projected_gravity[0],
             commands_scaled,
             dof_pos_scaled,
@@ -269,33 +261,26 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     )
 
     obs = torch.unsqueeze(obs, 0)
+    obs = torch.clamp(obs, min=-5.0, max=5.0)
 
     return obs
 
 def set_gains(kp, kd):
-    global Kp, Kd
+    global cmd_lock, current_targets
+
     cmd_lock.acquire()
-    Kp = kp
-    Kd = kd
+
+    for i in range(12):
+        current_targets.motorCmd[i].Kp = kp
+        current_targets.motorCmd[i].Kd = kd
+
     cmd_lock.release()
 
 def publish_cmd(te):
-    global cmd_lock, current_targets, current_actions, cmd_pub, Kp, Kd
-
-    qs = []
-
-    for i in range(12):
-        qs.append(current_targets.motorCmd[i].q + current_actions[i])
-
-    qs = joint_limit_clamp(qs)
+    global cmd_lock, current_targets, cmd_pub
 
     if not rospy.is_shutdown():
         cmd_lock.acquire()
-        for i in range(12):
-            current_targets.motorCmd[i].q = qs[i]
-            current_targets.motorCmd[i].Kp = Kp
-            current_targets.motorCmd[i].Kd = Kd
-
         cmd_pub.publish(current_targets)
         cmd_lock.release()
 
@@ -303,25 +288,32 @@ def set_current_targets(targets):
     global cmd_lock, current_targets
 
     targets_remapped = remap_order(targets, omni_to_sdk)
+    targets_clamped = joint_limit_clamp(targets_remapped)
 
     if not rospy.is_shutdown():
         cmd_lock.acquire()
         for i in range(12):
-            current_targets.motorCmd[i].q = targets_remapped[i]
+            current_targets.motorCmd[i].q = targets_clamped[i]
 
         cmd_lock.release()
 
-def set_current_actions(actions, dt):
-    global cmd_lock, current_actions
+def set_current_actions(actions, dt, scale):
+    global cmd_lock, current_targets
 
-    temp_current_actions = remap_order(actions, omni_to_sdk)
+    actions_remapped = remap_order(actions, omni_to_sdk)
+    new_targets = []
 
-    for i in range(len(temp_current_actions)):
-        temp_current_actions[i] = temp_current_actions[i] * dt
+    if not rospy.is_shutdown():
+        cmd_lock.acquire()
+        for i in range(12):
+            new_targets.append(current_targets.motorCmd[i].q + actions_remapped[i] * dt * scale)
 
-    cmd_lock.acquire()
-    current_actions = temp_current_actions
-    cmd_lock.release()
+        new_targets = joint_limit_clamp(new_targets)
+
+        for i in range(12):
+            current_targets.motorCmd[i].q = new_targets[i]
+
+        cmd_lock.release()
 
 def main():
     global state_init, odom_init, cmd_lock, cmd_pub, current_cmd_vel, last_actions, current_targets
@@ -349,7 +341,7 @@ def main():
         angle = named_default_joint_angles[name]
         default_dof_pos.append(angle)
 
-    default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float32, device=device)
+    default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float, device=device)
 
     current_targets = LowCmd()
     current_targets.head = [254, 239]
@@ -360,7 +352,6 @@ def main():
 
     set_gains(0.0, 0.0)
 
-    set_current_actions([0.0]*12, SDK_DT)
     set_current_targets(default_dof_pos)
     last_actions = torch.tensor([0.0]*12, dtype=torch.float, device=device)
 
@@ -427,6 +418,7 @@ def main():
     warmup = True
     rospy.loginfo("Warming Up...")
     warmup_count = 30
+
     with torch.no_grad():
         while not rospy.is_shutdown():
             start = time.time()
@@ -443,10 +435,9 @@ def main():
                 if warmup_count <= 0:
                     warmup = False
                     rospy.loginfo("Go!")
-                actions = [0.0] * 12
-
-            set_current_actions(actions, SDK_DT)
-            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
+            else:
+                set_current_actions(actions, 0.01, 15.0)
+                last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             nn_time = end - start
             if nn_time >= CONTROL_DT:
@@ -455,4 +446,5 @@ def main():
                 rospy.sleep(CONTROL_DT - nn_time)
 
 main()
+
 
