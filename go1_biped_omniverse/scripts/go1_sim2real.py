@@ -89,14 +89,15 @@ def joint_limit_clamp(in_vals):
 
     return out_vals
 
-def rescale_actions(actions, low=-1.0, high=1.0):
+
+def rescale_actions(actions, low=-1.0, high=1.0, clamp_low=-1.0, clamp_high=1.0):
     d = (high - low) / 2.0
     m = (high + low) / 2.0
 
     scaled_actions = []
 
     for a in actions:
-        a2 = max(-1.0, min(1.0, a))
+        a2 = max(clamp_low, min(clamp_high, a))
         scaled_actions.append(a2 * d + m)
 
     return scaled_actions
