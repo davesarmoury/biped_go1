@@ -6,7 +6,7 @@
   <joint name="GV7_joint" type="fixed">
     <parent link="base" />
     <child link="sensor" />
-    <origin xyz="0.2 0 0.1" rpy="0 0 0"/>
+    <origin xyz="0.2 0 0.1" rpy="3.14159 0 0"/>
   </joint>
 
   <link name="sensor" />
