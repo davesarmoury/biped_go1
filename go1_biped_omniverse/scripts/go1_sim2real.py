@@ -97,8 +97,8 @@ def rescale_actions(actions, low=-1.0, high=1.0, clamp_low=-1.0, clamp_high=1.0)
     scaled_actions = []
 
     for a in actions:
-        a2 = max(clamp_low, min(clamp_high, a))
-        scaled_actions.append(a2 * d + m)
+        a2 = max(clamp_low, min(clamp_high, a)) # clamp
+        scaled_actions.append(a2 * d + m)       # scale
 
     return scaled_actions
 
@@ -220,7 +220,7 @@ def cmd_vel_callback(msg):
     current_cmd_vel = msg
     cmd_vel_lock.release()
 
-def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos):
+def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations):
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
     torso_position, torso_rotation = get_transform()
 
@@ -256,7 +256,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     )
 
     obs = torch.unsqueeze(obs, 0)
-    obs = torch.clamp(obs, min=-5.0, max=5.0)
+    obs = torch.clamp(obs, min=-clip_observations, max=clip_observations)
 
     return obs
 
@@ -292,7 +292,7 @@ def set_current_targets(targets):
 
         cmd_lock.release()
 
-def set_current_actions(actions, dt, scale):
+def set_current_actions(actions, scale):
     global cmd_lock, current_targets
 
     actions_remapped = remap_order(actions, omni_to_sdk)
@@ -301,7 +301,7 @@ def set_current_actions(actions, dt, scale):
     if not rospy.is_shutdown():
         cmd_lock.acquire()
         for i in range(12):
-            new_targets.append(current_targets.motorCmd[i].q + actions_remapped[i] * dt * scale)
+            new_targets.append(current_targets.motorCmd[i].q + actions_remapped[i] * scale)
 
         new_targets = joint_limit_clamp(new_targets)
 
@@ -391,7 +391,7 @@ def main():
 
     cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
     rospy.Subscriber("/low_state", LowState, state_callback)
-    rospy.Subscriber("/nav/odom", Odometry, odom_callback)
+    rospy.Subscriber("/odometry/filtered", Odometry, odom_callback)
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
 
     rospy.Timer(rospy.Duration(SDK_DT), publish_cmd)
@@ -429,14 +429,15 @@ def main():
     with torch.no_grad():
         while not rospy.is_shutdown():
             start = time.time()
-            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos)
+            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations)
 
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
+
             mu = outputs[0][0]
             sigma = np.exp(outputs[1][0])
             actions = np.random.normal(mu, sigma)
 
-            actions = rescale_actions(actions)
+            actions = rescale_actions(actions, -clip_actions, clip_actions, -clip_actions, clip_actions)
             end = time.time()
 
             if warmup:
@@ -445,7 +446,7 @@ def main():
                     warmup = False
                     rospy.loginfo("Go!")
             else:
-                set_current_actions(actions, sim_dt, action_scale)
+                set_current_actions(actions, sim_dt * 1.0)
                 last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             nn_time = end - start
