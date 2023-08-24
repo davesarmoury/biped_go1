@@ -446,7 +446,7 @@ def main():
                     warmup = False
                     rospy.loginfo("Go!")
             else:
-                set_current_actions(actions, sim_dt * 1.0)
+                set_current_actions(actions, action_scale)
                 last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             nn_time = end - start
