@@ -271,6 +271,34 @@ def set_gains(kp, kd):
 
     cmd_lock.release()
 
+def control_loop(te):
+    global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
+    global ort_model
+
+    if not rospy.is_shutdown():
+        with torch.no_grad():
+            start = time.time_ns() / (10 ** 9)
+            obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations)
+
+            outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
+
+            mu = outputs[0][0]
+            sigma = np.exp(outputs[1][0])
+            actions = np.random.normal(mu, sigma)
+
+            actions = rescale_actions(actions, -clip_actions, clip_actions, -clip_actions, clip_actions)
+
+            set_current_actions(actions, action_scale)
+            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
+
+            end = time.time_ns() / (10 ** 9)
+
+            nn_time = end - start
+            if nn_time >= control_dt:
+                rospy.logwarn("LOOP EXECUTION TIME (" + str(nn_time) + ")")
+
+            rospy.loginfo(str(start))
+
 def publish_cmd(te):
     global cmd_lock, current_targets, cmd_pub
 
@@ -311,7 +339,9 @@ def set_current_actions(actions, scale):
         cmd_lock.release()
 
 def main():
-    global state_init, odom_init, cmd_lock, cmd_pub, current_cmd_vel, last_actions, current_targets
+    global state_init, odom_init, cmd_lock, cmd_pub, current_cmd_vel, current_targets
+    global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
+    global ort_model
 
     rospy.init_node('horizontal_controller', anonymous=True)
 
@@ -428,7 +458,7 @@ def main():
 
     with torch.no_grad():
         while not rospy.is_shutdown():
-            start = time.time()
+            start = time.time_ns() / (10 ** 9)
             obs = get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations)
 
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
@@ -438,22 +468,23 @@ def main():
             actions = np.random.normal(mu, sigma)
 
             actions = rescale_actions(actions, -clip_actions, clip_actions, -clip_actions, clip_actions)
-            end = time.time()
 
             if warmup:
                 warmup_count = warmup_count - 1
                 if warmup_count <= 0:
                     warmup = False
                     rospy.loginfo("Go!")
-            else:
-                set_current_actions(actions, action_scale)
-                last_actions = torch.tensor(actions, dtype=torch.float, device=device)
+                    break
+
+            end = time.time_ns() / (10 ** 9)
 
             nn_time = end - start
-            if nn_time >= control_dt:
-                rospy.logwarn("LOOP EXECUTION TIME (" + str(nn_time) + ")")
-            else:
-                rospy.sleep(control_dt - nn_time)
+            rospy.sleep(control_dt - nn_time)
+
+    rospy.loginfo("Starting Control Loop")
+
+    rospy.Timer(rospy.Duration(control_dt), control_loop)
+    rospy.spin()
 
 main()
 
