@@ -97,8 +97,7 @@ def rescale_actions(actions, low=-1.0, high=1.0, clamp_low=-1.0, clamp_high=1.0)
     scaled_actions = []
 
     for a in actions:
-        a2 = max(clamp_low, min(clamp_high, a)) # clamp
-        scaled_actions.append(a2 * d + m)       # scale
+        scaled_actions.append(max(clamp_low, min(clamp_high, a)) * d + m)
 
     return scaled_actions
 
@@ -283,10 +282,10 @@ def control_loop(te):
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0]
-            sigma = np.exp(outputs[1][0])
-            actions = np.random.normal(mu, sigma)
+#            sigma = np.exp(outputs[1][0])
+#            actions = np.random.normal(mu, sigma)
 
-            actions = rescale_actions(actions, -clip_actions, clip_actions, -clip_actions, clip_actions)
+            actions = rescale_actions(mu, -clip_actions, clip_actions, -clip_actions, clip_actions)
 
             set_current_actions(actions, action_scale)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
@@ -464,10 +463,10 @@ def main():
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0]
-            sigma = np.exp(outputs[1][0])
-            actions = np.random.normal(mu, sigma)
+#            sigma = np.exp(outputs[1][0])
+#            actions = np.random.normal(mu, sigma)
 
-            actions = rescale_actions(actions, -clip_actions, clip_actions, -clip_actions, clip_actions)
+            actions = rescale_actions(mu, -clip_actions, clip_actions, -clip_actions, clip_actions)
 
             if warmup:
                 warmup_count = warmup_count - 1
