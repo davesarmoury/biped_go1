@@ -31,6 +31,7 @@ import onnxruntime as ort
 # 1 RL_calf_joint  #
 ####################
 
+
 ### OMNI ORDER #####
 # 0 FL_hip_joint   #
 # 1 FR_hip_joint   #
@@ -61,14 +62,8 @@ max_limits = [Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_ma
 SDK_STRINGS = ["FR_hip_joint","FR_thigh_joint","FR_calf_joint","FL_hip_joint","FL_thigh_joint","FL_calf_joint","RR_hip_joint","RR_thigh_joint","RR_calf_joint","RL_hip_joint","RL_thigh_joint","RL_calf_joint"]
 OMNI_STRINGS = ["FL_hip_joint","FR_hip_joint","RL_hip_joint","RR_hip_joint","FL_thigh_joint","FR_thigh_joint","RL_thigh_joint","RR_thigh_joint","FL_calf_joint","FR_calf_joint","RL_calf_joint","RR_calf_joint"]
 
-omni_to_sdk = []
-sdk_to_omni = []
-
-for i in OMNI_STRINGS:
-    sdk_to_omni.append(SDK_STRINGS.index(i))
-
-for i in SDK_STRINGS:
-    omni_to_sdk.append(OMNI_STRINGS.index(i))
+omni_to_sdk = [1, 5, 9 ,0, 4, 8, 3, 7, 11, 2, 6, 10]
+sdk_to_omni = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
 
 device = 'cuda'
 
@@ -88,7 +83,6 @@ def joint_limit_clamp(in_vals):
         out_vals.append(max(min_limits[i], min(max_limits[i], in_vals[i])))
 
     return out_vals
-
 
 def do_rescale_actions(actions, low=-1.0, high=1.0):
     d = (high - low) / 2.0
@@ -282,6 +276,8 @@ def control_loop(te):
     global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
     global ort_model
 
+    zeros_remapped = remap_order(zeros, omni_to_sdk)
+
     if not rospy.is_shutdown():
         with torch.no_grad():
             start = time.time_ns() / (10 ** 9)
@@ -290,13 +286,11 @@ def control_loop(te):
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0]
-#            sigma = np.exp(outputs[1][0])
-#            actions = np.random.normal(mu, sigma)
 
             actions = do_clip_actions(mu, -clip_actions, clip_actions)
             actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
-            set_current_actions(actions, action_scale)
+            set_current_actions(actions, action_scale, zeros_remapped)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             end = time.time_ns() / (10 ** 9)
@@ -304,8 +298,6 @@ def control_loop(te):
             nn_time = end - start
             if nn_time >= control_dt:
                 rospy.logwarn("LOOP EXECUTION TIME (" + str(nn_time) + ")")
-
-            rospy.loginfo(str(start))
 
 def publish_cmd(te):
     global cmd_lock, current_targets, cmd_pub
@@ -328,18 +320,19 @@ def set_current_targets(targets):
 
         cmd_lock.release()
 
-def set_current_actions(actions, scale):
+def set_current_actions(actions, scale, zeros):
     global cmd_lock, current_targets
 
     actions_remapped = remap_order(actions, omni_to_sdk)
     new_targets = []
 
     if not rospy.is_shutdown():
-        cmd_lock.acquire()
         for i in range(12):
-            new_targets.append(current_targets.motorCmd[i].q + actions_remapped[i] * scale)
+            new_targets.append(zeros[i] + actions_remapped[i] * scale)
 
         new_targets = joint_limit_clamp(new_targets)
+
+        cmd_lock.acquire()
 
         for i in range(12):
             current_targets.motorCmd[i].q = new_targets[i]
@@ -351,7 +344,7 @@ def main():
     global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
     global ort_model
 
-    rospy.init_node('horizontal_controller', anonymous=True)
+    rospy.init_node('go1_omni_controller', anonymous=True)
 
     state_init = False
     odom_init = False
