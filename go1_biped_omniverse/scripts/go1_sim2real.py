@@ -90,16 +90,24 @@ def joint_limit_clamp(in_vals):
     return out_vals
 
 
-def rescale_actions(actions, low=-1.0, high=1.0, clamp_low=-1.0, clamp_high=1.0):
+def do_rescale_actions(actions, low=-1.0, high=1.0):
     d = (high - low) / 2.0
     m = (high + low) / 2.0
 
     scaled_actions = []
 
     for a in actions:
-        scaled_actions.append(max(clamp_low, min(clamp_high, a)) * d + m)
+        scaled_actions.append(a * d + m)
 
     return scaled_actions
+
+def do_clip_actions(actions, clamp_low=-1.0, clamp_high=1.0):
+    clipped_actions = []
+
+    for a in actions:
+        clipped_actions.append(max(clamp_low, min(clamp_high, a)))
+
+    return clipped_actions
 
 def remap_order(j_in, indices):
     if type(j_in) == torch.Tensor:
@@ -285,7 +293,8 @@ def control_loop(te):
 #            sigma = np.exp(outputs[1][0])
 #            actions = np.random.normal(mu, sigma)
 
-            actions = rescale_actions(mu, -clip_actions, clip_actions, -clip_actions, clip_actions)
+            actions = do_clip_actions(mu, -clip_actions, clip_actions)
+            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
             set_current_actions(actions, action_scale)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
@@ -439,6 +448,8 @@ def main():
         Kp_temp = Kp_temp + Kp_step
         Kd_temp = Kd_temp + Kd_step
 
+    set_gains(Kp, Kd)
+
     rospy.loginfo("Done")
 
     rate = rospy.Rate(1)
@@ -466,7 +477,8 @@ def main():
 #            sigma = np.exp(outputs[1][0])
 #            actions = np.random.normal(mu, sigma)
 
-            actions = rescale_actions(mu, -clip_actions, clip_actions, -clip_actions, clip_actions)
+            actions = do_clip_actions(mu, -clip_actions, clip_actions)
+            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
             if warmup:
                 warmup_count = warmup_count - 1
