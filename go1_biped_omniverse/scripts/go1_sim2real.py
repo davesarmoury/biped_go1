@@ -324,11 +324,12 @@ def set_current_actions(actions, scale, zeros):
     global cmd_lock, current_targets
 
     actions_remapped = remap_order(actions, omni_to_sdk)
+    zeros_remapped = remap_order(zeros, omni_to_sdk)
     new_targets = []
 
     if not rospy.is_shutdown():
         for i in range(12):
-            new_targets.append(zeros[i] + actions_remapped[i] * scale)
+            new_targets.append(zeros_remapped[i] + actions_remapped[i] * scale)
 
         new_targets = joint_limit_clamp(new_targets)
 
