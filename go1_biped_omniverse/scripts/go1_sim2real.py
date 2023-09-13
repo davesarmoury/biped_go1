@@ -276,8 +276,6 @@ def control_loop(te):
     global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
     global ort_model
 
-    zeros_remapped = remap_order(zeros, omni_to_sdk)
-
     if not rospy.is_shutdown():
         with torch.no_grad():
             start = time.time_ns() / (10 ** 9)
@@ -290,7 +288,7 @@ def control_loop(te):
             actions = do_clip_actions(mu, -clip_actions, clip_actions)
             actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
-            set_current_actions(actions, action_scale, zeros_remapped)
+            set_current_actions(actions, action_scale, default_dof_pos)
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             end = time.time_ns() / (10 ** 9)
