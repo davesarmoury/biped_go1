@@ -10,6 +10,7 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
 import numpy as np
 import time
+from std_msgs.msg import Float32MultiArray
 
 import onnx
 import onnxruntime as ort
@@ -275,6 +276,7 @@ def set_gains(kp, kd):
 def control_loop(te):
     global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
     global ort_model
+    global obs_pub, act_pub
 
     if not rospy.is_shutdown():
         with torch.no_grad():
@@ -284,6 +286,17 @@ def control_loop(te):
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             actions = outputs[0][0]
+
+            actions = do_clip_actions(actions, -clip_actions, clip_actions)
+            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
+
+            obs_msg = Float32MultiArray()
+            obs_msg.data = obs[0].cpu().tolist()
+            obs_pub.publish(obs_msg)
+
+            act_msg = Float32MultiArray()
+            act_msg.data = actions
+            act_pub.publish(act_msg)
 
             last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
@@ -319,9 +332,6 @@ def set_current_targets(targets):
 def set_current_actions(actions, scale, zeros):
     global cmd_lock, current_targets, clip_actions
 
-    actions = do_clip_actions(actions, -clip_actions, clip_actions)
-    actions = do_rescale_actions(actions, -clip_actions, clip_actions)
-    
     new_targets = []
 
     if not rospy.is_shutdown():
@@ -342,6 +352,7 @@ def main():
     global state_init, odom_init, cmd_lock, cmd_pub, current_cmd_vel, current_targets
     global lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale, last_actions, default_dof_pos, clip_observations, clip_actions, action_scale, control_dt
     global ort_model
+    global obs_pub, act_pub
 
     rospy.init_node('go1_omni_controller', anonymous=True)
 
@@ -381,7 +392,6 @@ def main():
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float, device=device)
 
     current_targets = LowCmd()
-#    current_targets.head = [254, 239]
     current_targets.levelFlag = 255 # LOW LEVEL
 
     for i in range(12):
@@ -420,6 +430,8 @@ def main():
     current_cmd_vel = Twist()
 
     cmd_pub = rospy.Publisher('/low_cmd', LowCmd, queue_size=10)
+    obs_pub = rospy.Publisher('/biped/observations', Float32MultiArray, queue_size=10)
+    act_pub = rospy.Publisher('/biped/actions', Float32MultiArray, queue_size=10)
     rospy.Subscriber("/low_state", LowState, state_callback)
     rospy.Subscriber("/odometry/filtered", Odometry, odom_callback)
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
