@@ -283,13 +283,11 @@ def control_loop(te):
 
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
-            mu = outputs[0][0]
+            actions = outputs[0][0]
 
-            actions = do_clip_actions(mu, -clip_actions, clip_actions)
-            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
+            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             set_current_actions(actions, action_scale, default_dof_pos)
-            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             end = time.time_ns() / (10 ** 9)
 
@@ -319,16 +317,18 @@ def set_current_targets(targets):
         cmd_lock.release()
 
 def set_current_actions(actions, scale, zeros):
-    global cmd_lock, current_targets
+    global cmd_lock, current_targets, clip_actions
 
-    actions_remapped = remap_order(actions, omni_to_sdk)
-    zeros_remapped = remap_order(zeros, omni_to_sdk)
+    actions = do_clip_actions(actions, -clip_actions, clip_actions)
+    actions = do_rescale_actions(actions, -clip_actions, clip_actions)
+    
     new_targets = []
 
     if not rospy.is_shutdown():
         for i in range(12):
-            new_targets.append(zeros_remapped[i] + actions_remapped[i] * scale)
+            new_targets.append(zeros[i] + actions[i] * scale)
 
+        new_targets = remap_order(new_targets, omni_to_sdk)
         new_targets = joint_limit_clamp(new_targets)
 
         cmd_lock.acquire()
@@ -381,11 +381,11 @@ def main():
     default_dof_pos = torch.tensor(default_dof_pos, dtype=torch.float, device=device)
 
     current_targets = LowCmd()
-    current_targets.head = [254, 239]
+#    current_targets.head = [254, 239]
     current_targets.levelFlag = 255 # LOW LEVEL
 
     for i in range(12):
-        current_targets.motorCmd[i].mode = 0x0A
+        current_targets.motorCmd[i].mode = 10
 
     set_gains(0.0, 0.0)
 
@@ -466,8 +466,6 @@ def main():
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0]
-#            sigma = np.exp(outputs[1][0])
-#            actions = np.random.normal(mu, sigma)
 
             actions = do_clip_actions(mu, -clip_actions, clip_actions)
             actions = do_rescale_actions(actions, -clip_actions, clip_actions)
