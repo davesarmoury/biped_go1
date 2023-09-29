@@ -1,6 +1,20 @@
 <launch>
-  <include file="$(find go1_biped_description)/launch/description.launch"/>
-  <include file="$(find go1_biped_control)/launch/control.launch"/>
-  <include file="$(find go1_biped_bringup)/launch/go1.launch"/>
+  <arg name="sim" default="false" />
+
+  <group unless="$(arg sim)">
+    <include file="$(find go1_biped_description)/launch/description.launch"/>
+    <include file="$(find go1_biped_control)/launch/control.launch"/>
+    <include file="$(find go1_biped_bringup)/launch/go1.launch"/>
+  </group>
+
+  <group if="$(arg sim)">
+    <include file="$(find go1_biped_control)/launch/control_sim.launch"/>
+    <node name="sim_macguffin" type="sim_macguffin.py" pkg="go1_biped_control" />
+    <include file="$(find unitree_gazebo)/launch/normal.launch" >
+      <arg name="rname" value="go1" />
+    </include>
+  </group>
+
   <!-- include file="$(find go1_biped_omniverse)/launch/omniverse_control.launch"/ -->
+
 </launch>
