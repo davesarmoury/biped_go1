@@ -15,6 +15,8 @@ from std_msgs.msg import Float32MultiArray
 import onnx
 import onnxruntime as ort
 
+import math
+import time
 #### EVERYTHING IS ASSUMED TO BE OMNI ORDER ####
 
 #### SDK ORDER #####
@@ -31,7 +33,6 @@ import onnxruntime as ort
 # 0 RL_thigh_joint #
 # 1 RL_calf_joint  #
 ####################
-
 
 ### OMNI ORDER #####
 # 0 FL_hip_joint   #
@@ -57,14 +58,19 @@ Thigh_min = -0.663 + joint_limit_tolerance
 Calf_max = -0.837 - joint_limit_tolerance
 Calf_min = -2.721 + joint_limit_tolerance
 
-min_limits = [Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min]
-max_limits = [Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max]
+min_limits = [Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min, Hip_min, Thigh_min, Calf_min] # SDK ORDER
+max_limits = [Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max, Hip_max, Thigh_max, Calf_max] # SDK ORDER
 
 SDK_STRINGS = ["FR_hip_joint","FR_thigh_joint","FR_calf_joint","FL_hip_joint","FL_thigh_joint","FL_calf_joint","RR_hip_joint","RR_thigh_joint","RR_calf_joint","RL_hip_joint","RL_thigh_joint","RL_calf_joint"]
 OMNI_STRINGS = ["FL_hip_joint","FR_hip_joint","RL_hip_joint","RR_hip_joint","FL_thigh_joint","FR_thigh_joint","RL_thigh_joint","RR_thigh_joint","FL_calf_joint","FR_calf_joint","RL_calf_joint","RR_calf_joint"]
 
-omni_to_sdk = [1, 5, 9 ,0, 4, 8, 3, 7, 11, 2, 6, 10]
-sdk_to_omni = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
+omni_to_sdk = []
+for i in SDK_STRINGS:
+    omni_to_sdk.append(OMNI_STRINGS.index(i))
+
+sdk_to_omni = []
+for i in OMNI_STRINGS:
+    sdk_to_omni.append(SDK_STRINGS.index(i))
 
 device = 'cuda'
 
@@ -84,17 +90,6 @@ def joint_limit_clamp(in_vals):
         out_vals.append(max(min_limits[i], min(max_limits[i], in_vals[i])))
 
     return out_vals
-
-def do_rescale_actions(actions, low=-1.0, high=1.0):
-    d = (high - low) / 2.0
-    m = (high + low) / 2.0
-
-    scaled_actions = []
-
-    for a in actions:
-        scaled_actions.append(a * d + m)
-
-    return scaled_actions
 
 def do_clip_actions(actions, clamp_low=-1.0, clamp_high=1.0):
     clipped_actions = []
@@ -118,12 +113,12 @@ def remap_order(j_in, indices):
     return j_out
 
 def state_callback(msg):
-    global current_joint_positions, current_joint_velocities, state_init
+    global current_joint_positions, current_joint_velocities, state_init, state_lock
 
     temp_joint_positions = []
     temp_joint_velocities = []
 
-    for i in range(12):
+    for i in sdk_to_omni:
         j = msg.motorState[i]
         temp_joint_positions.append(j.q)
         temp_joint_velocities.append(j.dq)
@@ -135,7 +130,7 @@ def state_callback(msg):
     state_lock.release()
 
 def odom_callback(msg):
-    global current_odom, odom_init
+    global current_odom, odom_init, odom_lock
 
     odom_lock.acquire()
     current_odom = msg
@@ -165,7 +160,7 @@ def quat_rotate_inverse(q, v):
     return a - b + c
 
 def get_transform():
-    global current_odom, odom_init
+    global current_odom, odom_lock
 
     odom_lock.acquire()
     pos = current_odom.pose.pose.position
@@ -175,7 +170,7 @@ def get_transform():
     return [pos.x, pos.y, pos.z], [ori.w, ori.x, ori.y, ori.z]
 
 def get_velocity():
-    global current_odom, odom_init
+    global current_odom, odom_lock
 
     odom_lock.acquire()
     linear = current_odom.twist.twist.linear
@@ -191,8 +186,6 @@ def get_joint_positions():
     temp_joint_positions = current_joint_positions
     state_lock.release()
 
-    temp_joint_positions = remap_order(temp_joint_positions, sdk_to_omni)
-
     return temp_joint_positions
 
 def get_joint_velocities():
@@ -201,8 +194,6 @@ def get_joint_velocities():
     state_lock.acquire()
     temp_joint_velocities = current_joint_velocities
     state_lock.release()
-
-    temp_joint_velocities = remap_order(temp_joint_velocities, sdk_to_omni)
 
     return temp_joint_velocities
 
@@ -226,7 +217,6 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
     commands = torch.tensor(get_commands(), dtype=torch.float, device=device)
     torso_position, torso_rotation = get_transform()
 
-    torso_position = torch.tensor([torso_position], dtype=torch.float, device=device)
     torso_rotation = torch.tensor([torso_rotation], dtype=torch.float, device=device)
 
     dof_vel = torch.tensor(get_joint_velocities(), dtype=torch.float, device=device)
@@ -234,11 +224,11 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
 
     root_velocity, ang_velocity = get_velocity()
     ang_velocity = torch.tensor(ang_velocity, dtype=torch.float, device=device)
-
     base_ang_vel = ang_velocity * ang_vel_scale
-    projected_gravity = quat_rotate(torso_rotation, gravity_vec)
-    dof_pos_scaled = (dof_pos - default_dof_pos) * dof_pos_scale
 
+    projected_gravity = quat_rotate_inverse(torso_rotation, gravity_vec)
+    dof_pos = dof_pos - default_dof_pos
+    
     commands_scaled = commands * torch.tensor(
         [lin_vel_scale, ang_vel_scale],
         requires_grad=False,
@@ -250,7 +240,7 @@ def get_observations(lin_vel_scale, ang_vel_scale, dof_pos_scale, dof_vel_scale,
             base_ang_vel,
             projected_gravity[0],
             commands_scaled,
-            dof_pos_scaled,
+            dof_pos * dof_pos_scale,
             dof_vel * dof_vel_scale,
             last_actions,
         ),
@@ -288,7 +278,6 @@ def control_loop(te):
             actions = outputs[0][0]
 
             actions = do_clip_actions(actions, -clip_actions, clip_actions)
-            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
             obs_msg = Float32MultiArray()
             obs_msg.data = obs[0].cpu().tolist()
@@ -298,9 +287,9 @@ def control_loop(te):
             act_msg.data = actions
             act_pub.publish(act_msg)
 
-            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
-
             set_current_actions(actions, action_scale, default_dof_pos)
+
+            last_actions = torch.tensor(actions, dtype=torch.float, device=device)
 
             end = time.time_ns() / (10 ** 9)
 
@@ -330,15 +319,14 @@ def set_current_targets(targets):
         cmd_lock.release()
 
 def set_current_actions(actions, scale, zeros):
-    global cmd_lock, current_targets, clip_actions
+    global cmd_lock, current_targets
 
     new_targets = []
 
     if not rospy.is_shutdown():
-        for i in range(12):
+        for i in omni_to_sdk:
             new_targets.append(zeros[i] + actions[i] * scale)
 
-        new_targets = remap_order(new_targets, omni_to_sdk)
         new_targets = joint_limit_clamp(new_targets)
 
         cmd_lock.acquire()
@@ -364,7 +352,8 @@ def main():
     dof_pos_scale = rospy.get_param("/env/learn/dofPositionScale")
     dof_vel_scale = rospy.get_param("/env/learn/dofVelocityScale")
     named_default_joint_angles = rospy.get_param("/env/defaultJointAngles")
-    dof_names = list(named_default_joint_angles.keys())
+    dof_names = OMNI_STRINGS
+
     model_path = rospy.get_param("/model/path")
 
     Kp = rospy.get_param("/env/control/stiffness")
@@ -422,9 +411,6 @@ def main():
 
     rospy.loginfo("Used: " + str(ort_model.get_providers()))
 
-    input_shape = (1, 44)
-    output_shape = (1, 12)
-
     rospy.loginfo("#####################################################")
 
     current_cmd_vel = Twist()
@@ -437,6 +423,16 @@ def main():
     rospy.Subscriber("/cmd_vel", Twist, cmd_vel_callback)
 
     rospy.Timer(rospy.Duration(SDK_DT), publish_cmd)
+
+    rate = rospy.Rate(1)
+
+    while not rospy.is_shutdown():
+        rospy.loginfo("Waiting for initialization data...")
+        if state_init and odom_init:
+            break
+        rate.sleep()
+
+    rospy.loginfo("Initialized")
 
     rate = rospy.Rate(5)
     Kp_step = Kp / 25.0 # 5 Seconds
@@ -456,16 +452,6 @@ def main():
 
     rospy.loginfo("Done")
 
-    rate = rospy.Rate(1)
-
-    while not rospy.is_shutdown():
-        rospy.loginfo("Waiting for initialization data...")
-        if state_init and odom_init:
-            break
-        rate.sleep()
-
-    rospy.loginfo("Initialized")
-
     warmup = True
     rospy.loginfo("Warming Up...")
     warmup_count = 30
@@ -478,9 +464,6 @@ def main():
             outputs = ort_model.run(None, {"obs": obs.cpu().numpy()}, )
 
             mu = outputs[0][0]
-
-            actions = do_clip_actions(mu, -clip_actions, clip_actions)
-            actions = do_rescale_actions(actions, -clip_actions, clip_actions)
 
             if warmup:
                 warmup_count = warmup_count - 1
